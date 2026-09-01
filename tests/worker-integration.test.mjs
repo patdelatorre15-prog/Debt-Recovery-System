@@ -79,7 +79,7 @@ test('Google token verification and pending Admin grant activate on first sign-i
   const originalFetch=globalThis.fetch;globalThis.fetch=async url=>String(url).startsWith('https://oauth2.googleapis.com/tokeninfo')?new Response(JSON.stringify({aud:'google-client',email_verified:'true',sub:'new-google-sub',email:'new@example.com',name:'New User'}),{status:200,headers:{'content-type':'application/json'}}):originalFetch(url);
   try{
     const request=new Request('https://api.example/api/auth/google',{method:'POST',headers:{origin:'https://review.example','content-type':'application/json'},body:JSON.stringify({credential:'test-id-token'})});
-    const response=await worker.fetch(request,env,{}),data=await response.json();assert.equal(response.status,200);assert.equal(data.user.email,'new@example.com');assert.match(response.headers.get('set-cookie'),/HttpOnly; Secure; SameSite=Lax/);
+    const response=await worker.fetch(request,env,{}),data=await response.json();assert.equal(response.status,200);assert.equal(data.user.email,'new@example.com');assert.match(response.headers.get('set-cookie'),/HttpOnly; Secure; SameSite=None/);
     assert.equal(DB.prepare("SELECT status FROM admin_access_grants WHERE id='grant-1'").first().status,'claimed');
   }finally{globalThis.fetch=originalFetch;}
 });
