@@ -87,6 +87,7 @@ function metric(label,value,note='',tone=''){ return `<div class="metric"><span 
 function track(value,max,tone=''){ const pct=max>0?Math.min(100,Math.max(0,value/max*100)):0; return `<div class="track ${tone}"><i style="width:${pct}%"></i></div>`; }
 function pill(text,tone=''){ return `<span class="pill ${tone}">${h(text)}</span>`; }
 function notice(message,error=false){ $('#noticeRegion').innerHTML=`<div class="notice ${error?'error':''}"><span>${message}</span><button aria-label="Dismiss" onclick="this.parentElement.remove()">×</button></div>`; window.scrollTo({top:0,behavior:'smooth'}); }
+function clearNotice(){ $('#noticeRegion').innerHTML=''; }
 
 function renderNav(){
   $('#navigation').innerHTML=NAV.map(([key,icon,label])=>`<button class="nav-button ${state.page===key?'active':''}" data-page="${key}" ${state.page===key?'aria-current="page"':''}><span class="nav-icon">${icon}</span>${label}</button>`).join('');
@@ -311,5 +312,5 @@ $('#menuButton').addEventListener('click',()=>$('#sidebar').classList.toggle('op
 document.addEventListener('keydown',event=>{if(event.key==='Escape')return closeModal();if(event.key==='Tab'&&$('#modalRoot').innerHTML){const items=[...$('#modalRoot').querySelectorAll('button,input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter(x=>!x.disabled),first=items[0],last=items.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}});
 async function hydrateLive(){const patch=await window.DRS_API?.bootstrap();if(patch){Object.keys(patch).forEach(key=>{if(patch[key]!==undefined)state[key]=patch[key];});}}
 render();
-if(window.DRS_API?.live)hydrateLive().then(render).catch(error=>notice(error.message,true));
-window.addEventListener('drs-authenticated',()=>hydrateLive().then(render).catch(error=>notice(error.message,true)));
+if(window.DRS_API?.live)hydrateLive().then(render).catch(error=>{if(error.message!=='Please sign in.')notice(error.message,true);});
+window.addEventListener('drs-authenticated',()=>{clearNotice();hydrateLive().then(()=>{clearNotice();render();}).catch(error=>notice(error.message,true));});
