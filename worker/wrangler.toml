@@ -15,7 +15,7 @@ BREVO_SENDER_NAME = "Tiny Tools Studio"
 [[d1_databases]]
 binding = "DB"
 database_name = "debt-recovery-system-development"
-database_id = "CONFIGURE_AFTER_D1_CREATION"
+database_id = "720ddbef-1c0b-4236-90c1-b3fb8276e1fc"
 migrations_dir = "migrations"
 
 [triggers]
