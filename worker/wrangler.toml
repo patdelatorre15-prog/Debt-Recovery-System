@@ -1,0 +1,29 @@
+name = "debt-recovery-system-api"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+[vars]
+APP_ENV = "development"
+ALLOWED_ORIGINS = "http://localhost:8788,http://localhost:4173"
+GOOGLE_CLIENT_ID = "CONFIGURE_IN_CLOUDFLARE"
+PAYMENT_PROVIDER_MODE = "disabled"
+PAYPAL_ENVIRONMENT = "sandbox"
+EMAIL_PROVIDER_MODE = "development"
+BREVO_SENDER_EMAIL = "tiny.tools.studio.ph@gmail.com"
+BREVO_SENDER_NAME = "Tiny Tools Studio"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "debt-recovery-system-development"
+database_id = "CONFIGURE_AFTER_D1_CREATION"
+migrations_dir = "migrations"
+
+[triggers]
+crons = ["17 1 * * *"]
+
+# Production secrets are configured in Cloudflare and must never be committed:
+# PAYHIP_API_KEY, PAYPAL_WEBHOOK_ID, PAYPAL_CLIENT_ID,
+# PAYPAL_CLIENT_SECRET, BREVO_API_KEY.
+# Product maps are non-secret JSON vars whose values remain pending until final
+# products exist, for example: {"PAYHIP_PRODUCT_ID":"3months"}.
+# PAYHIP_PRODUCT_MAP and PAYPAL_PRODUCT_MAP must never contain prices or secrets.
