@@ -44,6 +44,7 @@ export default {
       if (request.method==='GET' && /^\/api\/debts\/[^/]+\/history$/.test(url.pathname)) return cors(await debtHistory(url.pathname.split('/')[3],env,user),request,env);
       if (route === 'GET /api/recovery') return cors(await recoverySummary(env,user),request,env);
       if (route === 'POST /api/recovery/goal') return cors(await saveRecoveryGoal(request,env,user),request,env);
+      if (route === 'POST /api/recovery/start') return cors(await startRecoveryJourney(request,env,user),request,env);
       if (route === 'GET /api/account/export') return cors(await exportAccount(env,user),request,env);
       if (route === 'POST /api/account/deletion') return cors(await requestAccountDeletion(request,env,user),request,env);
       if (route === 'GET /api/admin/entitlements') return cors(await adminEntitlements(request,env,user),request,env);
@@ -197,7 +198,7 @@ async function saveAllocationRule(request,env,user){
 async function listGoals(request,env,user){
   const category=new URL(request.url).searchParams.get('category');
   if(category&&!['savings','fun'].includes(category))return reply({error:'invalid_category'},400);
-  const sql=`SELECT g.*,COALESCE(SUM(CASE WHEN l.entry_type='goal_allocation' THEN l.amount_minor WHEN l.entry_type='goal_use' THEN l.amount_minor ELSE 0 END),0) saved_minor FROM goals g LEFT JOIN ledger_entries l ON l.related_type='goal' AND l.related_id=g.id WHERE g.user_id=? ${category?'AND g.category=?':''} GROUP BY g.id ORDER BY g.status,g.created_at DESC`;
+  const sql=`SELECT g.*,COALESCE(-SUM(CASE WHEN l.entry_type IN ('goal_allocation','goal_use') THEN l.amount_minor ELSE 0 END),0) saved_minor FROM goals g LEFT JOIN ledger_entries l ON l.related_type='goal' AND l.related_id=g.id WHERE g.user_id=? ${category?'AND g.category=?':''} GROUP BY g.id ORDER BY g.status,g.created_at DESC`;
   const rows=category?await env.DB.prepare(sql).bind(user.id,category).all():await env.DB.prepare(sql).bind(user.id).all();
   return reply({items:rows.results});
 }
@@ -342,8 +343,20 @@ async function saveRecoveryGoal(request,env,user){
   return reply({targetBalanceMinor:target,targetDate});
 }
 
+async function startRecoveryJourney(request,env,user){
+  const existing=await env.DB.prepare(`SELECT user_id FROM recovery_journeys WHERE user_id=?`).bind(user.id).first();
+  if(existing)return reply({error:'recovery_journey_already_started'},409);
+  const b=await readJson(request),started=validDate(b.date)||dateOnly(new Date()),now=new Date().toISOString();
+  const debts=await env.DB.prepare(`SELECT id,current_balance_minor FROM debts WHERE user_id=? AND status IN ('active','paused')`).bind(user.id).all();
+  const starting=debts.results.reduce((sum,d)=>sum+Number(d.current_balance_minor),0);
+  if(starting<=0)return reply({error:'active_debt_required'},409);
+  const statements=[env.DB.prepare(`INSERT INTO recovery_journeys(user_id,started_on,starting_debt_minor,target_balance_minor,target_date,no_new_debt_since,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`).bind(user.id,started,starting,0,null,started,now,now)];
+  debts.results.forEach(d=>statements.push(env.DB.prepare(`UPDATE debts SET journey_start_balance_minor=?,updated_at=? WHERE id=? AND user_id=?`).bind(d.current_balance_minor,now,d.id,user.id)));
+  await env.DB.batch(statements);return reply({startedOn:started,startingDebtMinor:starting},201);
+}
+
 async function exportAccount(env,user){
-  const tables=['allocation_rules','ledger_entries','expected_income','living_plans','goals','creditors','debts','recovery_journeys','recovery_snapshots'];
+  const tables=['allocation_rules','ledger_entries','expected_income','living_plans','living_bill_instances','goals','creditors','debts','recovery_journeys','recovery_snapshots'];
   const data={exportedAt:new Date().toISOString(),profile:safeUser(user)};
   for(const table of tables)data[table]=(await env.DB.prepare(`SELECT * FROM ${table} WHERE user_id=?`).bind(user.id).all()).results;
   const debtIds=data.debts.map(x=>x.id);

@@ -8,62 +8,13 @@ const NAV = [
 const DEFAULT_STATE = {
   page:'dashboard',
   allocations:[
-    {key:'living',name:'Living Expenses',percentage:40},
-    {key:'debt',name:'Debt',percentage:55},
-    {key:'savings',name:'Savings',percentage:4},
-    {key:'fun',name:'Fun',percentage:1}
+    {key:'living',name:'Living Expenses',percentage:50},
+    {key:'debt',name:'Debt',percentage:20},
+    {key:'savings',name:'Savings',percentage:30},
+    {key:'fun',name:'Fun',percentage:0}
   ],
-  funds:{living:6240,debt:38400,savings:6240,fun:1200},
-  incomes:[
-    {id:'i1',date:'2026-08-24',source:'Other income',description:'Pat Payday 2',amount:50000,allocated:true},
-    {id:'i2',date:'2026-08-15',source:'Salary',description:'Salary',amount:52000,allocated:true}
-  ],
-  expected:[
-    {id:'e1',date:'2026-09-05',name:'Salary',source:'Salary',amount:52000,status:'Expected'},
-    {id:'e2',date:'2026-08-24',name:'Pat Payday 2',source:'Other income',amount:50000,status:'Received'}
-  ],
-  bills:[
-    {id:'b1',name:'Electricity',plan:6000,actual:7200,dueDay:2,status:'Needs review'},
-    {id:'b2',name:'Internet',plan:2200,actual:2200,dueDay:5,status:'Upcoming'},
-    {id:'b3',name:'Rent',plan:12000,actual:12000,dueDay:15,status:'Paid'}
-  ],
-  budgets:[
-    {id:'m1',name:'Groceries',plan:6500,spent:4100},
-    {id:'m2',name:'Health',plan:2500,spent:900},
-    {id:'m3',name:'Transport',plan:1400,spent:500}
-  ],
-  goals:{
-    savings:[
-      {id:'sg1',name:'Emergency Fund – Phase 1',type:'target',target:50000,balance:1800},
-      {id:'sg2',name:'Medical Emergency Fund',type:'target',target:310000,balance:392}
-    ],
-    fun:[
-      {id:'fg1',name:'Travel Fund',type:'sinking',target:25000,balance:4200},
-      {id:'fg2',name:'Date Nights',type:'continuous',target:0,balance:850}
-    ]
-  },
-  debts:[
-    {id:'d1',creditor:'Credit Card A',balance:310000,starting:240000,payment:11500,dueDate:'2026-08-26',status:'Overdue',interestMode:'percentage',interestValue:3,interestFrequency:'monthly',paused:false,created:'2026-08-13'},
-    {id:'d2',creditor:'Private Loan – Ana',balance:240000,starting:240000,payment:7200,dueDate:'2026-09-12',status:'Paused',interestMode:'fixed',interestValue:7200,interestFrequency:'monthly',paused:true,created:'2026-08-13'},
-    {id:'d3',creditor:'Home Loan',balance:1911577,starting:1911577,payment:28000,dueDate:'2026-09-12',status:'Upcoming',interestMode:'included',interestValue:0,interestFrequency:'monthly',paused:false,created:'2026-08-13'},
-    {id:'d4',creditor:'Personal Loan',balance:480000,starting:500000,payment:7800,dueDate:'2026-09-18',status:'Upcoming',interestMode:'none',interestValue:0,interestFrequency:'monthly',paused:false,created:'2026-08-13'}
-  ],
-  journey:{startDate:'2026-08-13',startingDebt:2912273,targetBalance:0,targetDate:'',noNewDebtSince:'2026-08-20'},
-  recoveryPoints:[
-    {date:'2026-04-30',balance:2860000},{date:'2026-05-31',balance:2890000},{date:'2026-06-30',balance:2815000},
-    {date:'2026-07-31',balance:2901000},{date:'2026-08-31',balance:2941577}
-  ],
-  activities:[
-    {id:'a1',date:'2026-08-28',category:'debt',type:'interest',title:'Interest added · Private Loan – Ana',detail:'Fixed monthly amount',amount:7200},
-    {id:'a2',date:'2026-08-25',category:'debt',type:'payment',title:'Payment made · Credit Card A',detail:'Interest first, then principal',amount:-11500},
-    {id:'a3',date:'2026-08-25',category:'savings',type:'goal',title:'Added to Emergency Fund – Phase 1',detail:'From available Savings funds',amount:1500},
-    {id:'a4',date:'2026-08-24',category:'income',type:'income',title:'Pat Payday 2 received',detail:'Allocation breakdown recorded',amount:50000},
-    {id:'a5',date:'2026-08-24',category:'living',type:'allocation',title:'Income allocation received',detail:'Pat Payday 2 · 40%',amount:20000},
-    {id:'a6',date:'2026-08-24',category:'debt',type:'allocation',title:'Income allocation received',detail:'Pat Payday 2 · 55%',amount:27500},
-    {id:'a7',date:'2026-08-24',category:'savings',type:'allocation',title:'Income allocation received',detail:'Pat Payday 2 · 4%',amount:2000},
-    {id:'a8',date:'2026-08-24',category:'fun',type:'allocation',title:'Income allocation received',detail:'Pat Payday 2 · 1%',amount:500},
-    {id:'a9',date:'2026-08-20',category:'debt',type:'negotiated',title:'Negotiated balance · Personal Loan',detail:'Reduced from ₱500,000 to ₱480,000',amount:-20000}
-  ],
+  funds:{living:0,debt:0,savings:0,fun:0}, incomes:[], expected:[], bills:[], budgets:[],
+  goals:{savings:[],fun:[]}, debts:[], journey:null, recoveryPoints:[], activities:[],
   transfers:[]
 };
 
@@ -81,7 +32,7 @@ function currentDebt(){ return state.debts.reduce((sum,d)=>sum+Number(d.balance)
 function activitiesFor(category){ return state.activities.filter(a=>!category||a.category===category).sort((a,b)=>b.date.localeCompare(a.date)); }
 function addActivity(category,type,title,detail,amount,date=TODAY){ state.activities.unshift({id:uid('a'),date,category,type,title,detail,amount:Number(amount)}); }
 function header(title,subtitle,actions=''){ $('#pageTitle').textContent=title; $('#pageSubtitle').textContent=subtitle; $('#pageActions').innerHTML=actions; }
-function button(label,action,kind='button'){ return `<button class="${kind}" data-action="${action}">${label}</button>`; }
+function button(label,action,kind='button'){ return `<button type="button" class="${kind}" data-action="${action}">${label}</button>`; }
 function card(title,body,action='',subtitle=''){ return `<section class="card"><div class="card-header"><div><h2>${h(title)}</h2>${subtitle?`<p>${h(subtitle)}</p>`:''}</div>${action}</div>${body}</section>`; }
 function metric(label,value,note='',tone=''){ return `<div class="metric"><span class="metric-label">${label}</span><strong class="metric-value ${tone}">${value}</strong>${note?`<span class="metric-note">${note}</span>`:''}</div>`; }
 function track(value,max,tone=''){ const pct=max>0?Math.min(100,Math.max(0,value/max*100)):0; return `<div class="track ${tone}"><i style="width:${pct}%"></i></div>`; }
@@ -92,7 +43,7 @@ function clearNotice(){ $('#noticeRegion').innerHTML=''; }
 function renderNav(){
   $('#navigation').innerHTML=NAV.map(([key,icon,label])=>`<button class="nav-button ${state.page===key?'active':''}" data-page="${key}" ${state.page===key?'aria-current="page"':''}><span class="nav-icon">${icon}</span>${label}</button>`).join('');
 }
-function go(page){ state.page=page; saveState(); render(); $('#sidebar').classList.remove('open'); window.scrollTo(0,0); }
+function go(page){ state.page=page; clearNotice(); saveState(); render(); $('#sidebar').classList.remove('open'); window.scrollTo(0,0); }
 function render(){ renderNav(); const views={dashboard:renderDashboard,income:renderIncome,living:renderLiving,savings:()=>renderFundsPage('savings'),fun:()=>renderFundsPage('fun'),debt:renderDebt,actions:renderActions,recovery:renderRecovery,account:renderAccount}; (views[state.page]||renderDashboard)(); }
 
 function activitySection(category,title='Activity'){
@@ -115,11 +66,18 @@ function renderDashboard(){
     ['SHORT BY ₱3,800','Debt allocation','New allocation will cover this negative first',3800],['NEW ALLOCATION','Debt funds received','Previous negative was deducted first',5000]
   ];
   const attentionHtml=attention.length?`<div class="attention-grid">${attention.map((x,i)=>`<div class="attention-item ${i%2?'attention-separator':''}"><span class="attention-code">${x[0]}</span><div><span class="row-title">${x[1]}</span><span class="row-subtitle">${x[2]}</span></div><span class="amount">${money(x[3])} ›</span></div>`).join('')}</div>`:`<div class="empty">Nothing needs attention right now.</div>`;
-  const allocationHtml=state.allocations.map(x=>`<div class="allocation-row"><div><span>${x.name} · ${x.percentage}%</span><b>${money(50000*x.percentage/100)}</b></div>${track(x.percentage,100)}</div>`).join('');
+  const allocatedThisMonth=key=>activitiesFor(key).filter(a=>a.type==='allocation'&&a.date.startsWith(MONTH)).reduce((sum,a)=>sum+Math.max(0,a.amount),0);
+  const allocationHtml=state.allocations.map(x=>`<div class="allocation-row"><div><span>${x.name} · ${x.percentage}%</span><b>${money(allocatedThisMonth(x.key))}</b></div>${track(x.percentage,100)}</div>`).join('');
+  const expectedIncome=state.expected.filter(x=>x.status==='Expected'&&x.date.startsWith(MONTH)).reduce((s,x)=>s+x.amount,0);
+  const livingNeeded=state.bills.reduce((s,b)=>s+Math.max(b.actual-Number(b.paid||0),0),0);
+  const debtNeeded=Math.max(debtDue-paid,0),stillNeeded=livingNeeded+debtNeeded;
+  const plannedRemaining=Math.max(0,state.budgets.reduce((s,b)=>s+Math.max(b.plan-b.spent,0),0));
+  const forecast=`<div class="forecast-grid">${metric('Available now',money(Object.values(state.funds).reduce((a,b)=>a+b,0)))}${metric('Expected income',money(expectedIncome),'Planned—not received')}${metric('Still needed',money(stillNeeded),'Unpaid commitments','negative')}${metric('Planned spending remaining',money(plannedRemaining))}${metric('Projected after commitments',money(Object.values(state.funds).reduce((a,b)=>a+b,0)+expectedIncome-stillNeeded-plannedRemaining),'Forecast only')}</div>`;
   app.innerHTML=`
     <div class="metrics">${metric('Available this month',money(Object.values(state.funds).reduce((a,b)=>a+b,0)),'Across all categories','positive')}${metric('Due this month',money(debtDue),'Scheduled debt payments')}${metric('Paid this month',money(paid),'Debt payments recorded','positive')}${metric('Unpaid this month',money(unpaid),'Bills and debt still due','negative')}</div>
     ${card('Needs attention',attentionHtml,`<button class="link-button" data-action="attention-all">View all →</button>`)}
-    <div class="grid-2">${card('Monthly allocation',allocationHtml,`<button class="link-button" data-action="allocation-settings">Manage →</button>`,'Current percentages apply only to future income')}${card('Recovery snapshot',`<div class="recovery-hero"><div class="recovery-stat"><span class="metric-label">Starting debt</span><strong class="metric-value">${money(state.journey.startingDebt)}</strong></div><div class="recovery-stat"><span class="metric-label">Current debt</span><strong class="metric-value">${money(currentDebt())}</strong></div><div class="recovery-stat"><span class="metric-label">Change</span><strong class="metric-value ${currentDebt()>state.journey.startingDebt?'negative':'positive'}">${currentDebt()>state.journey.startingDebt?'+':''}${money(currentDebt()-state.journey.startingDebt)}</strong></div><div class="recovery-stat"><span class="metric-label">Recovered</span><strong class="metric-value">${Number(state.recoverySummary?.recoveredPercentage||0).toFixed(1)}%</strong></div></div><div class="recovery-message">${currentDebt()>state.journey.startingDebt?`Your current balance is ${money(currentDebt()-state.journey.startingDebt)} above the journey start.`:`You have recovered ${money(state.recoverySummary?.recoveredMinor??state.journey.startingDebt-currentDebt())}.`}</div>`,`<button class="link-button" data-page="recovery">View Recovery →</button>`)}</div>
+    ${card('Monthly forecast',forecast,'','Expected income is planning only and is never counted as received.')}
+    <div class="grid-2">${card('Monthly allocation',allocationHtml,`<button type="button" class="link-button" data-page="income">Manage in Income →</button>`,'Current percentages apply only to future income')}${recoverySnapshotCard()}</div>
     ${card('Wins & milestones',winsHtml(),`<button class="link-button" data-page="recovery">View Recovery →</button>`)}
     ${activitySection('', 'Recent activity')}`;
 }
@@ -128,12 +86,19 @@ function renderIncome(){
   header('Income','Record received income and plan what is expected.',button('+ Add income','add-income'));
   const incomeRows=state.incomes.map(i=>`<div class="list-row compact"><span class="date">${shortDate(i.date)}</span><div><span class="row-title">${h(i.description)}</span><span class="row-subtitle">${h(i.source)} · allocated automatically</span></div><span class="amount positive">+${money(i.amount)}</span><button class="button-secondary" data-action="income-breakdown" data-id="${h(i.id)}">Breakdown</button></div>`).join('');
   const expectedRows=state.expected.map(i=>`<div class="list-row compact"><span class="date">${shortDate(i.date)}</span><div><span class="row-title">${h(i.name)}</span><span class="row-subtitle">${h(i.source)} · expected ${money(i.amount)}</span></div>${pill(i.status,i.status==='Received'?'':'gold')}<div class="row-actions"><span class="amount">${money(i.amount)}</span>${i.status==='Expected'?`<button class="button-secondary" data-action="receive-expected" data-id="${h(i.id)}">Receive</button>`:''}</div></div>`).join('');
-  app.innerHTML=`<div class="grid-2">${card('Income received',`<div class="list">${incomeRows}</div>`,'','Allocation is recorded with every received income')}${card('Expected income',`<div class="list">${expectedRows}</div>`,`<button class="link-button" data-action="manage-income">Manage plans</button>`)}</div>${activitySection('income','Income activity')}`;
+  const allocationHtml=state.allocations.map(x=>`<div class="allocation-row"><div><span>${x.name}</span><b>${x.percentage}%</b></div>${track(x.percentage,100)}</div>`).join('');
+  app.innerHTML=`<div class="grid-2">${card('Income received',`<div class="list">${incomeRows}</div>`,'','Allocation is recorded with every received income')}${card('Expected income',`<div class="list">${expectedRows}</div>`,`<button type="button" class="link-button" data-action="manage-income">Manage plans</button>`)}</div>${card('Allocation percentages',allocationHtml,`<button type="button" class="link-button" data-action="allocation-settings">Manage percentages</button>`,'Changes apply to future income only.')}${activitySection('income','Income activity')}`;
+}
+
+function recoverySnapshotCard(){
+  if(!state.journey)return card('Recovery snapshot','<div class="empty">Recovery journey not started.</div>',`<button type="button" class="link-button" data-page="recovery">Set up Recovery →</button>`);
+  const change=currentDebt()-state.journey.startingDebt;
+  return card('Recovery snapshot',`<div class="recovery-hero"><div class="recovery-stat"><span class="metric-label">Starting debt</span><strong class="metric-value">${money(state.journey.startingDebt)}</strong></div><div class="recovery-stat"><span class="metric-label">Current debt</span><strong class="metric-value">${money(currentDebt())}</strong></div><div class="recovery-stat"><span class="metric-label">Change</span><strong class="metric-value ${change>0?'negative':'positive'}">${change>0?'+':''}${money(change)}</strong></div><div class="recovery-stat"><span class="metric-label">Recovered</span><strong class="metric-value">${Number(state.recoverySummary?.recoveredPercentage||0).toFixed(1)}%</strong></div></div>`,`<button type="button" class="link-button" data-page="recovery">View Recovery →</button>`);
 }
 
 function renderLiving(){
   const planned=state.bills.reduce((s,b)=>s+b.plan,0)+state.budgets.reduce((s,b)=>s+b.plan,0);
-  const spent=state.bills.reduce((s,b)=>s+Number(b.paid??(b.status==='Paid'?b.actual:0)),0)+state.budgets.reduce((s,b)=>s+b.spent,0);
+  const spent=Math.abs(activitiesFor('living').filter(a=>['expense','bill'].includes(a.type)&&a.date.startsWith(MONTH)).reduce((s,a)=>s+Math.min(0,a.amount),0));
   const due=state.bills.reduce((s,b)=>s+Math.max(b.actual-Number(b.paid||0),0),0);
   header('Living Expenses','Stay ahead of bills and everyday spending.',button('+ Add funds','add-funds')+button('+ Record expense','record-expense'));
   const bills=state.bills.map(b=>`<div class="list-row"><span class="date">${String(b.dueDay).padStart(2,'0')}</span><div><span class="row-title">${h(b.name)}</span><span class="row-subtitle">${b.actual>b.plan?`Actual is ${money(b.actual-b.plan)} above the ${money(b.plan)} plan`:'Monthly bill'}</span></div>${pill(b.status,b.status==='Needs review'?'bad':'')}<span class="amount">${money(Math.max(b.actual-Number(b.paid||0),0))}</span><div class="row-actions">${b.status!=='Paid'?`<button class="button-secondary" data-action="pay-bill" data-id="${h(b.id)}">Pay</button>`:''}</div></div>`).join('');
@@ -166,6 +131,7 @@ function renderActions(){
 }
 
 function renderRecovery(){
+  if(!state.journey){header('Recovery','Review your active debts before starting the recovery journey.');app.innerHTML=card('Set up your recovery journey',`<p class="page-subtitle">Starting debt will be fixed from all active balances only after you confirm.</p><div class="breakdown-box">${state.debts.map(d=>`<div class="breakdown-row"><span>${h(d.creditor)}</span><b>${money(d.balance)}</b></div>`).join('')}<div class="breakdown-row total"><span>Starting debt at confirmation</span><b>${money(currentDebt())}</b></div></div>`,button('Start Recovery Journey','start-journey'));return;}
   const current=currentDebt(), change=current-state.journey.startingDebt,recovered=state.recoverySummary?.recoveredPercentage??Math.max(0,(state.journey.startingDebt-current)/Math.max(state.journey.startingDebt,1)*100);
   header('Recovery','See how far you’ve come and where you’re headed.');
   app.innerHTML=`<div class="split-wide">${card('Your debt recovery',`<div class="recovery-hero"><div class="recovery-stat"><span class="metric-label">Starting debt</span><strong class="metric-value">${money(state.journey.startingDebt)}</strong><span class="metric-note">${shortDate(state.journey.startDate)}</span></div><div class="recovery-stat"><span class="metric-label">Current debt</span><strong class="metric-value">${money(current)}</strong><span class="metric-note">As of ${shortDate(TODAY)}</span></div><div class="recovery-stat"><span class="metric-label">Overall ${change>0?'increase':'reduction'}</span><strong class="metric-value ${change>0?'negative':'positive'}">${change>0?'+':''}${money(change)}</strong><span class="metric-note">Since journey start</span></div><div class="recovery-stat"><span class="metric-label">Recovered</span><strong class="metric-value">${Number(recovered).toFixed(1)}%</strong></div></div><div class="recovery-message">${change>0?`Your debt is currently ${money(change)} above your starting balance.`:`You have recovered ${money(Math.abs(change))} since your journey began.`}</div>`)}${card('Recovery goal',`<div class="breakdown-row"><span>Journey start</span><b>${shortDate(state.journey.startDate)}</b></div><div class="breakdown-row"><span>Starting debt</span><b>${money(state.journey.startingDebt)}</b></div><div class="breakdown-row"><span>Target balance</span><b>${money(state.journey.targetBalance)}</b></div><div class="breakdown-row"><span>Target date</span><b>${state.journey.targetDate?shortDate(state.journey.targetDate):'Not set'}</b></div><div class="recovery-message">Journey Start and Starting Debt stay fixed.</div>`,`<div class="row-actions"><button class="link-button" data-action="journey-details">Details</button><button class="link-button" data-action="edit-recovery">Edit</button></div>`)}</div><div class="grid-2">${card('Your debt over time',graphHtml(),'','Monthly movement of your total debt balance')}${card(`Payments vs adjustments — ${new Date(TODAY+'T00:00:00').toLocaleDateString('en-PH',{month:'long'})}`,breakdownHtml())}</div>${card('Wins & milestones',winsHtml(),`<button class="link-button" data-action="milestones-all">View all →</button>`)}${card('Recovery timeline',recoveryTimeline(),`<button class="link-button" data-action="milestones-all">View all →</button>`,'Only debts cleared and meaningful recovery milestones')}`;
@@ -183,8 +149,8 @@ function breakdownHtml(){
 }
 function winsHtml(){
   const cleared=state.recoverySummary?.debtsCleared??state.debts.filter(d=>d.balance<=.001).length;
-  const streak=state.recoverySummary?.noNewDebtDays??Math.max(0,Math.floor((new Date(TODAY)-new Date(state.journey.noNewDebtSince))/86400000)),negotiated=Math.abs(state.recoveryBreakdown?.negotiated??-20000);
-  return `<div class="wins-grid"><div class="win-card"><span class="win-icon">✓</span><span class="row-title">No new debt streak</span><span class="metric-value">${streak} days</span><span class="row-subtitle">Keep protecting the progress</span></div><div class="win-card"><span class="win-icon">★</span><span class="row-title">Debts cleared</span><span class="metric-value">${cleared}</span><span class="row-subtitle">Accounts fully paid and closed</span></div><div class="win-card"><span class="win-icon">↘</span><span class="row-title">Negotiated recovery</span><span class="metric-value">${money(negotiated)}</span><span class="row-subtitle">Balance formally reduced</span></div></div>`;
+  const streak=state.journey?(state.recoverySummary?.noNewDebtDays??Math.max(0,Math.floor((new Date(TODAY)-new Date(state.journey.noNewDebtSince))/86400000))):0,negotiated=Math.abs(state.recoveryBreakdown?.negotiated??0);
+  return `<div class="wins-grid"><div class="win-card"><span class="win-icon">✓</span><span class="row-title">No new debt streak</span><span class="metric-value">${state.journey?`${streak} days`:'Not started'}</span><span class="row-subtitle">${state.journey?'Keep protecting the progress':'Starts when the journey is confirmed'}</span></div><div class="win-card"><span class="win-icon">★</span><span class="row-title">Debts cleared</span><span class="metric-value">${cleared}</span><span class="row-subtitle">Accounts fully paid and closed</span></div><div class="win-card"><span class="win-icon">↘</span><span class="row-title">Negotiated recovery</span><span class="metric-value">${money(negotiated)}</span><span class="row-subtitle">Balance formally reduced</span></div></div>`;
 }
 function recoveryTimeline(){
   const rows=state.activities.filter(a=>['cleared','milestone','negotiated'].includes(a.type)).slice(0,4);
@@ -200,7 +166,8 @@ function labelFor(key){ return ({living:'Living Expenses',debt:'Debt',savings:'S
 let modalReturnFocus=null;
 function openModal(config){
   const root=$('#modalRoot');modalReturnFocus=document.activeElement;
-  root.innerHTML=`<div class="modal-backdrop" role="presentation"><section class="modal-panel ${config.wide?'wide':''}" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-header"><div><h2 id="modalTitle">${h(config.title)}</h2><p>${h(config.subtitle||'')}</p></div><button class="close-button" data-action="close-modal" aria-label="Close">×</button></div><form id="modalForm" data-form="${h(config.form)}">${config.body}<div id="modalError" role="alert" aria-live="assertive"></div><div class="modal-actions"><button type="button" class="button-secondary" data-action="close-modal">Cancel</button><button type="submit" class="button">${h(config.submit||'Save')}</button></div></form></section></div>`;
+  const readOnly=config.form==='noop';
+  root.innerHTML=`<div class="modal-backdrop" role="presentation"><section class="modal-panel ${config.wide?'wide':''}" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-header"><div><h2 id="modalTitle">${h(config.title)}</h2><p>${h(config.subtitle||'')}</p></div><button type="button" class="close-button" data-action="close-modal" aria-label="Close">×</button></div><form id="modalForm" method="post" action="javascript:void(0)" data-form="${h(config.form)}">${config.body}<div id="modalError" role="alert" aria-live="assertive"></div><div class="modal-actions">${readOnly?'':`<button type="button" class="button-secondary" data-action="close-modal">Cancel</button>`}<button type="${readOnly?'button':'submit'}" class="button" ${readOnly?'data-action="close-modal"':''}>${h(config.submit||'Save')}</button></div></form></section></div>`;
   root.querySelector('input,select,button')?.focus();
 }
 const field=(label,name,type='text',value='',extra='',full='')=>`<div class="field ${full}"><label for="${h(name)}">${h(label)}</label><input id="${h(name)}" name="${h(name)}" type="${h(type)}" value="${h(value)}" ${extra}></div>`;
@@ -236,7 +203,8 @@ function actionModal(action,id){
   if(action==='move-funds') return openModal({title:'Move funds',subtitle:'Transfer existing money between categories.',form:'transfer',body:`<div class="form-grid">${field('Date','date','date',TODAY,'required')}${selectField('From category','from',state.allocations.map(a=>[a.key,`${a.name} · ${money(state.funds[a.key])}`]))}${selectField('To category','to',state.allocations.map(a=>[a.key,a.name]))}${field('Amount','amount','number','','min="0.01" step="0.01" required')}</div>`});
   if(action==='journey-details') return journeyDetails();
   if(action==='edit-recovery') return openModal({title:'Edit recovery goal',subtitle:'Journey Start and Starting Debt remain fixed.',form:'recovery-goal',body:`<div class="form-grid">${field('Target balance','targetBalance','number',state.journey.targetBalance,'min="0" step="0.01" required')}${field('Target date','targetDate','date',state.journey.targetDate,'')}</div>`});
-  if(action==='allocation-settings') return allocationModal();
+  if(action==='allocation-settings'){if(state.page!=='income')return go('income');return allocationModal();}
+  if(action==='start-journey') return openModal({title:'Start Recovery Journey',subtitle:'This permanently fixes the journey start and starting debt. Later debts will be recorded as Debt Added.',form:'start-journey',submit:'Confirm journey start',body:`<div class="breakdown-box"><div class="breakdown-row"><span>Journey date</span><b>${shortDate(TODAY)}</b></div><div class="breakdown-row total"><span>Starting debt</span><b>${money(currentDebt())}</b></div></div><div class="warning-box">Confirm only after all current debts are recorded.</div>`});
   if(action==='income-breakdown') return incomeBreakdown(id);
   if(action==='view-activity') return allActivity(id);
   if(action==='manage-income') return openModal({title:'Add expected income',subtitle:'Plan a future salary or other income. This does not add funds until received.',form:'expected-income',body:`<div class="form-grid">${field('Expected date','date','date',TODAY,'required')}${selectField('Source','source',[['Salary','Salary'],['Freelance','Freelance'],['Business','Business'],['Other income','Other income']])}${field('Plan name','name','text','','required')}${field('Expected amount','amount','number','','min="0.01" step="0.01" required')}</div>`});
@@ -260,7 +228,7 @@ function allActivity(category=''){ const rows=activitiesFor(category); openModal
 async function submitForm(form){
   const data=Object.fromEntries(new FormData(form).entries()), kind=form.dataset.form;
   if(kind==='noop'){ closeModal(); return; }
-  if(window.DRS_API?.live){try{await window.DRS_API.persist(kind,data,state.page);await hydrateLive();closeModal();render();notice('Saved. The activity and balances were updated.');}catch(error){modalError(error.message);}return;}
+  if(window.DRS_API?.live){try{const submit=form.querySelector('[type="submit"]');if(submit)submit.disabled=true;await window.DRS_API.persist(kind,data,state.page);await hydrateLive();closeModal();render();notice(successMessage(kind));}catch(error){const submit=form.querySelector('[type="submit"]');if(submit)submit.disabled=false;modalError(error.message);}return;}
   if(kind==='income'){
     const amount=Number(data.amount), income={id:uid('i'),date:data.date,source:data.source,description:data.description,amount,allocated:true}; state.incomes.unshift(income); addActivity('income','income',`${data.description} received`,'Allocation breakdown recorded',amount,data.date);
     state.allocations.forEach(a=>{ const allocated=amount*a.percentage/100; state.funds[a.key]+=allocated; addActivity(a.key,'allocation','Income allocation received',`${data.description} · ${a.percentage}%`,allocated,data.date); });
@@ -296,8 +264,10 @@ async function submitForm(form){
     if(existing)existing.plan=Number(data.plan); else state.budgets.push({id:uid('m'),name:data.name,plan:Number(data.plan),spent:0});
   }
   if(kind==='recovery-goal'){ state.journey.targetBalance=Number(data.targetBalance); state.journey.targetDate=data.targetDate; }
-  saveState(); closeModal(); render(); notice('Saved. The activity and balances were updated.');
+  if(kind==='start-journey'){state.journey={startDate:TODAY,startingDebt:currentDebt(),targetBalance:0,targetDate:'',noNewDebtSince:TODAY};state.debts.forEach(d=>d.starting=d.balance);}
+  saveState(); closeModal(); render(); notice(successMessage(kind));
 }
+function successMessage(kind){return ({'expected-income':'Expected income plan saved. No funds were added.','bill-plan':'Bill plan and current bill saved. No payment was recorded.','budget-plan':'Monthly budget plan saved.','new-goal':'Goal created. No funds were moved.','allocations':'Allocation percentages saved for future income.','recovery-goal':'Recovery goal updated.','start-journey':'Recovery journey started. Starting debt is now fixed.'})[kind]||'Saved. The activity and balances were updated.';}
 
 document.addEventListener('click',event=>{
   const page=event.target.closest('[data-page]')?.dataset.page; if(page)return go(page);
@@ -307,10 +277,9 @@ document.addEventListener('click',event=>{
   if(action==='delete-account'){if(!window.DRS_API?.live)return notice('Account deletion is disabled in the local visual-review build.',true);return openModal({title:'Delete account and financial data',subtitle:'This removes live financial and profile data. Required payment and operational records follow the disclosed retention rules.',form:'delete-account',submit:'Delete account',body:`<div class="warning-box">Temporary backup copies may remain until backup expiry, normally within 30 days.</div><div class="form-grid">${field('Type DELETE to confirm','confirmation','text','','required pattern="DELETE"','full')}</div>`});}
   actionModal(action,id);
 });
-document.addEventListener('submit',event=>{ if(event.target.id==='modalForm'){event.preventDefault();submitForm(event.target);} });
+document.addEventListener('submit',event=>{if(event.target.id!=='modalForm')return;event.preventDefault();event.stopPropagation();submitForm(event.target);},true);
 $('#menuButton').addEventListener('click',()=>$('#sidebar').classList.toggle('open'));
 document.addEventListener('keydown',event=>{if(event.key==='Escape')return closeModal();if(event.key==='Tab'&&$('#modalRoot').innerHTML){const items=[...$('#modalRoot').querySelectorAll('button,input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter(x=>!x.disabled),first=items[0],last=items.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}});
 async function hydrateLive(){const patch=await window.DRS_API?.bootstrap();if(patch){Object.keys(patch).forEach(key=>{if(patch[key]!==undefined)state[key]=patch[key];});}}
-render();
-if(window.DRS_API?.live)hydrateLive().then(render).catch(error=>{if(error.message!=='Please sign in.')notice(error.message,true);});
+if(window.DRS_API?.live){header('Loading your workspace','Confirming your session and current balances.');app.innerHTML='<div class="loading-grid"><div class="loading-card"></div><div class="loading-card"></div><div class="loading-card wide"></div></div>';renderNav();hydrateLive().then(()=>{if(state.userRole==='admin'){location.replace('admin.html');return;}render();}).catch(error=>{if(error.message!=='Please sign in.')notice(error.message,true);});}else render();
 window.addEventListener('drs-authenticated',()=>{clearNotice();hydrateLive().then(()=>{clearNotice();render();}).catch(error=>notice(error.message,true));});

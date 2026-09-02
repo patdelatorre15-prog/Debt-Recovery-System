@@ -3,110 +3,11 @@ const notice=document.querySelector('#adminNotice');
 const show=(message,error=false)=>{notice.hidden=false;notice.textContent=message;notice.classList.toggle('error',error);};
 async function api(path,options={}){const response=await fetch(apiBase+path,{credentials:'include',headers:{'content-type':'application/json',...(options.headers||{})},...options});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);return data;}
 function escapeHtml(value){return String(value||'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));}
-
-document.querySelector('#searchForm').addEventListener('submit',async event=>{
-  event.preventDefault();
-  try{
-    const q=new FormData(event.currentTarget).get('q');
-    const data=await api(`/api/admin/entitlements?q=${encodeURIComponent(q)}`);
-    document.querySelector('#entitlements').innerHTML=data.items.length
-      ?`<div class="table-wrap"><table><thead><tr><th>User</th><th>Source</th><th>Plan</th><th>Dates</th><th>Status</th></tr></thead><tbody>${data.items.map(x=>`<tr><td><strong>${escapeHtml(x.email)}</strong><br><span class="muted">${escapeHtml(x.name)}</span></td><td>${escapeHtml(x.source)}</td><td>${escapeHtml(x.plan)}</td><td>${escapeHtml(x.starts_on)} – ${escapeHtml(x.ends_on)}</td><td>${x.status==='pending_first_sign_in'?'<span class="pill gold">Pending first sign-in</span>':`<select data-status-id="${escapeHtml(x.id)}"><option ${x.status==='active'?'selected':''}>active</option><option ${x.status==='suspended'?'selected':''}>suspended</option><option ${x.status==='revoked'?'selected':''}>revoked</option></select><button class="link-button" data-save-status="${escapeHtml(x.id)}">Save</button>`}</td></tr>`).join('')}</tbody></table></div>`
-      :'<p class="muted">No matching entitlements.</p>';
-  }catch(error){
-    show(error.message,true);
-  }
-});
-
-document.querySelector('#entitlementForm').addEventListener('submit',async event=>{
-  event.preventDefault();
-  const form=event.currentTarget;
-  try{
-    const body=Object.fromEntries(new FormData(form));
-    const result=await api('/api/admin/entitlements',{
-      method:'POST',
-      headers:{'idempotency-key':crypto.randomUUID()},
-      body:JSON.stringify(body)
-    });
-    show(result.status==='active'
-      ?`Access is active. Entitlement ${result.id} was recorded.`
-      :'The access grant is saved and will activate when this Gmail first signs in.'
-    );
-    form.reset();
-  }catch(error){
-    show(error.message,true);
-  }
-});
-
-document.querySelector('#recoveryForm').addEventListener('submit',async event=>{
-  event.preventDefault();
-  try{
-    const body=Object.fromEntries(new FormData(event.currentTarget));
-    const result=await api('/api/admin/activation-recovery',{
-      method:'POST',
-      body:JSON.stringify(body)
-    });
-    show(
-      result.status==='active'
-        ?'Activation recovered and linked to the verified transaction.'
-        :`Activation remains ${result.status}.`,
-      result.status!=='active'
-    );
-  }catch(error){
-    show(error.message,true);
-  }
-});
-
-document.addEventListener('click',async event=>{
-  const id=event.target.dataset.saveStatus;
-  if(!id)return;
-  try{
-    const status=document.querySelector(`[data-status-id="${CSS.escape(id)}"]`).value;
-    await api('/api/admin/entitlements/status',{
-      method:'POST',
-      body:JSON.stringify({
-        entitlementId:id,
-        status,
-        reason:'Admin status update'
-      })
-    });
-    show(`Entitlement status changed to ${status}.`);
-    loadAudit();
-  }catch(error){
-    show(error.message,true);
-  }
-});
-
-async function loadAttention(){
-  try{
-    const data=await api('/api/admin/activation-attention');
-    document.querySelector('#activationAttention').innerHTML=data.items.length
-      ?`<div class="activity-list">${data.items.map(x=>`<div class="list-row compact admin-attention-row"><div><strong>${escapeHtml(x.user_email)}</strong><small>${escapeHtml(x.provider_transaction_id)}</small></div><span>${escapeHtml(x.status)}</span><span>${x.retry_count} retries</span><button class="link-button" type="button" data-use-event="${escapeHtml(x.id)}">Use ID</button></div>`).join('')}</div>`
-      :'<p class="muted">No activation exceptions.</p>';
-  }catch(error){
-    show(error.message,true);
-  }
-}
-
-async function loadAudit(){
-  try{
-    const data=await api('/api/admin/audit');
-    document.querySelector('#auditHistory').innerHTML=data.items.length
-      ?`<div class="activity-list">${data.items.slice(0,20).map(x=>`<div class="list-row compact admin-audit-row"><div><strong>${escapeHtml(x.action)}</strong><small>${escapeHtml(x.subject_email||'System')}</small></div><span class="pill">${escapeHtml(x.result)}</span><time datetime="${escapeHtml(x.created_at)}">${escapeHtml(x.created_at.slice(0,10))}</time></div>`).join('')}</div>`
-      :'<p class="muted">No Admin audit events yet.</p>';
-  }catch(error){
-    show(error.message,true);
-  }
-}
-
-document.addEventListener('click',event=>{
-  if(event.target.dataset.useEvent){
-    document.querySelector('#recoveryForm [name="paymentEventId"]').value=event.target.dataset.useEvent;
-  }
-});
-
-api('/api/session')
-  .then(({user})=>{
-    if(user.role!=='admin')throw new Error('Admin access is required.');
-    return Promise.all([loadAttention(),loadAudit()]);
-  })
-  .catch(error=>show(error.message,true));
+document.querySelector('#searchForm').addEventListener('submit',async event=>{event.preventDefault();try{const q=new FormData(event.currentTarget).get('q'),data=await api(`/api/admin/entitlements?q=${encodeURIComponent(q)}`);document.querySelector('#entitlements').innerHTML=data.items.length?`<div class="table-wrap"><table><thead><tr><th>User</th><th>Source</th><th>Plan</th><th>Dates</th><th>Status</th></tr></thead><tbody>${data.items.map(x=>`<tr><td><strong>${escapeHtml(x.email)}</strong><br><span class="muted">${escapeHtml(x.name)}</span></td><td>${escapeHtml(x.source)}</td><td>${escapeHtml(x.plan)}</td><td>${escapeHtml(x.starts_on)} – ${escapeHtml(x.ends_on)}</td><td>${x.status==='pending_first_sign_in'?'<span class="pill gold">Pending first sign-in</span>':`<select data-status-id="${escapeHtml(x.id)}"><option ${x.status==='active'?'selected':''}>active</option><option ${x.status==='suspended'?'selected':''}>suspended</option><option ${x.status==='revoked'?'selected':''}>revoked</option></select><button class="link-button" data-save-status="${escapeHtml(x.id)}">Save</button>`}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">No matching entitlements.</p>';}catch(error){show(error.message,true);}});
+document.querySelector('#entitlementForm').addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget;try{const body=Object.fromEntries(new FormData(form));const result=await api('/api/admin/entitlements',{method:'POST',headers:{'idempotency-key':crypto.randomUUID()},body:JSON.stringify(body)});show(result.status==='active'?`Access is active. Entitlement ${result.id} was recorded.`:'The access grant is saved and will activate when this Gmail first signs in.');form.reset();}catch(error){show(error.message,true);}});
+document.querySelector('#recoveryForm').addEventListener('submit',async event=>{event.preventDefault();try{const body=Object.fromEntries(new FormData(event.currentTarget));const result=await api('/api/admin/activation-recovery',{method:'POST',body:JSON.stringify(body)});show(result.status==='active'?'Activation recovered and linked to the verified transaction.':`Activation remains ${result.status}.`,result.status!=='active');}catch(error){show(error.message,true);}});
+document.addEventListener('click',async event=>{const id=event.target.dataset.saveStatus;if(!id)return;try{const status=document.querySelector(`[data-status-id="${CSS.escape(id)}"]`).value;await api('/api/admin/entitlements/status',{method:'POST',body:JSON.stringify({entitlementId:id,status,reason:'Admin status update'})});show(`Entitlement status changed to ${status}.`);loadAudit();}catch(error){show(error.message,true);}});
+async function loadAttention(){try{const data=await api('/api/admin/activation-attention');document.querySelector('#activationAttention').innerHTML=data.items.length?`<div class="activity-list">${data.items.map(x=>`<div class="list-row compact admin-attention-row"><div><strong>${escapeHtml(x.user_email)}</strong><small>${escapeHtml(x.provider_transaction_id)}</small></div><span>${escapeHtml(x.status)}</span><span>${x.retry_count} retries</span><button class="link-button" type="button" data-use-event="${escapeHtml(x.id)}">Use ID</button></div>`).join('')}</div>`:'<p class="muted">No activation exceptions.</p>';}catch(error){show(error.message,true);}}
+async function loadAudit(){try{const data=await api('/api/admin/audit');document.querySelector('#auditHistory').innerHTML=data.items.length?`<div class="activity-list">${data.items.slice(0,20).map(x=>`<div class="list-row compact admin-audit-row"><div><strong>${escapeHtml(x.action)}</strong><small>${escapeHtml(x.subject_email||'System')}</small></div><span class="pill">${escapeHtml(x.result)}</span><time datetime="${escapeHtml(x.created_at)}">${escapeHtml(x.created_at.slice(0,10))}</time></div>`).join('')}</div>`:'<p class="muted">No Admin audit events yet.</p>';}catch(error){show(error.message,true);}}
+document.addEventListener('click',event=>{if(event.target.dataset.useEvent)document.querySelector('#recoveryForm [name="paymentEventId"]').value=event.target.dataset.useEvent;});
+api('/api/session').then(({user})=>{if(user.role!=='admin'){location.replace('index.html');return null;}return Promise.all([loadAttention(),loadAudit()]);}).catch(error=>show(error.message,true));
