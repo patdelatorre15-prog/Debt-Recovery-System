@@ -1,332 +1,328 @@
-function renderDashboard(){
-  header(
-    'Your financial month',
-    'See what needs attention and where your money is going.'
-  );
+const TODAY = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+const MONTH = TODAY.slice(0,7);
+const NAV = [
+  ['dashboard','⌂','Dashboard'],['income','＋','Income'],['living','⌑','Living Expenses'],
+  ['savings','◇','Savings'],['fun','☆','Fun'],['debt','▤','Debt'],
+  ['actions','⇄','Actions'],['recovery','↘','Recovery'],['account','○','Account']
+];
+const DEFAULT_STATE = {
+  page:'dashboard',
+  allocations:[
+    {key:'living',name:'Living Expenses',percentage:50},
+    {key:'debt',name:'Debt',percentage:20},
+    {key:'savings',name:'Savings',percentage:30},
+    {key:'fun',name:'Fun',percentage:0}
+  ],
+  funds:{living:0,debt:0,savings:0,fun:0}, incomes:[], expected:[], bills:[], budgets:[],
+  goals:{savings:[],fun:[]}, costPlans:[], debts:[], journey:null, recoveryPoints:[], activities:[],
+  transfers:[]
+};
 
-  const debtDue = state.debts
-    .filter(d => d.dueDate.startsWith(MONTH))
-    .reduce((sum, debt) => sum + debt.payment, 0);
+const clone = value => JSON.parse(JSON.stringify(value));
+let state = loadState();
+const $ = selector => document.querySelector(selector);
+const app = $('#app');
+const h = value => String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const money = value => `${Number(value||0)<0?'−':''}₱${Math.abs(Number(value||0)).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+const shortDate = value => new Date(value+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'2-digit',year:value.slice(0,4)!=='2026'?'numeric':undefined});
+const uid = prefix => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function loadState(){ try { return Object.assign(clone(DEFAULT_STATE),JSON.parse(localStorage.getItem('drs-demo-state')||'{}')); } catch { return clone(DEFAULT_STATE); } }
+function saveState(){ localStorage.setItem('drs-demo-state',JSON.stringify(state)); }
+function currentDebt(){ return state.debts.reduce((sum,d)=>sum+Number(d.balance),0); }
+function activitiesFor(category){ return state.activities.filter(a=>!category||a.category===category).sort((a,b)=>b.date.localeCompare(a.date)); }
+function addActivity(category,type,title,detail,amount,date=TODAY){ state.activities.unshift({id:uid('a'),date,category,type,title,detail,amount:Number(amount)}); }
+function header(title,subtitle,actions=''){ $('#pageTitle').textContent=title; $('#pageSubtitle').textContent=subtitle; $('#pageActions').innerHTML=actions; }
+function button(label,action,kind='button'){ return `<button type="button" class="${kind}" data-action="${action}">${label}</button>`; }
+function card(title,body,action='',subtitle=''){ return `<section class="card"><div class="card-header"><div><h2>${h(title)}</h2>${subtitle?`<p>${h(subtitle)}</p>`:''}</div>${action}</div>${body}</section>`; }
+function metric(label,value,note='',tone=''){ return `<div class="metric"><span class="metric-label">${label}</span><strong class="metric-value ${tone}">${value}</strong>${note?`<span class="metric-note">${note}</span>`:''}</div>`; }
+function track(value,max,tone=''){ const pct=max>0?Math.min(100,Math.max(0,value/max*100)):0; return `<div class="track ${tone}"><i style="width:${pct}%"></i></div>`; }
+function pill(text,tone=''){ return `<span class="pill ${tone}">${h(text)}</span>`; }
+function notice(message,error=false){ $('#noticeRegion').innerHTML=`<div class="notice ${error?'error':''}"><span>${message}</span><button aria-label="Dismiss" onclick="this.parentElement.remove()">×</button></div>`; window.scrollTo({top:0,behavior:'smooth'}); }
+function clearNotice(){ $('#noticeRegion').innerHTML=''; }
 
-  const paid = Math.abs(
-    activitiesFor('debt')
-      .filter(
-        activity =>
-          activity.type === 'payment' &&
-          activity.date.startsWith(MONTH)
-      )
-      .reduce((sum, activity) => sum + activity.amount, 0)
-  );
-
-  const unpaid =
-    Math.max(debtDue - paid, 0) +
-    state.bills.reduce(
-      (sum, bill) =>
-        sum + Math.max(bill.actual - Number(bill.paid || 0), 0),
-      0
-    );
-
-  const attention = state.attention || [];
-
-  const attentionHtml = attention.length
-    ? `
-      <div class="attention-grid">
-        ${attention.map((item, index) => `
-          <div class="attention-item ${
-            index % 2 ? 'attention-separator' : ''
-          }">
-            <span class="attention-code">${h(item[0])}</span>
-
-            <div>
-              <span class="row-title">${h(item[1])}</span>
-              <span class="row-subtitle">${h(item[2])}</span>
-            </div>
-
-            <span class="amount">${money(item[3])} ›</span>
-          </div>
-        `).join('')}
-      </div>
-    `
-    : `
-      <div class="empty">
-        Nothing needs attention right now.
-      </div>
-    `;
-
-  const allocatedThisMonth = category =>
-    activitiesFor(category)
-      .filter(
-        activity =>
-          activity.type === 'allocation' &&
-          activity.date.startsWith(MONTH)
-      )
-      .reduce(
-        (sum, activity) => sum + Math.max(0, activity.amount),
-        0
-      );
-
-  const allocationHtml = state.allocations
-    .map(allocation => `
-      <div class="allocation-row">
-        <div>
-          <span>
-            ${h(allocation.name)} · ${allocation.percentage}%
-          </span>
-
-          <b>${money(allocatedThisMonth(allocation.key))}</b>
-        </div>
-
-        ${track(allocation.percentage, 100)}
-      </div>
-    `)
-    .join('');
-
-  /*
-   * Forecast period:
-   * Today through the next 29 days, for a total of 30 days.
-   */
-  const forecastEndDate =
-    new Date(`${TODAY}T00:00:00+08:00`);
-
-  forecastEndDate.setDate(
-    forecastEndDate.getDate() + 29
-  );
-
-  const forecastEnd =
-    new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Manila',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).format(forecastEndDate);
-
-  const fallsInsideForecast = date =>
-    Boolean(date) &&
-    date >= TODAY &&
-    date <= forecastEnd;
-
-  /*
-   * Overdue obligations are included because they are
-   * still required within the forecast period.
-   */
-  const isDueWithinForecast = date =>
-    !date || date <= forecastEnd;
-
-  /*
-   * Expected income remains planning only.
-   * Received income is not included here.
-   */
-  const expectedItems = state.expected.filter(
-    income =>
-      income.status === 'Expected' &&
-      fallsInsideForecast(income.date)
-  );
-
-  const expectedIncome = expectedItems.reduce(
-    (sum, income) => sum + Number(income.amount || 0),
-    0
-  );
-
-  /*
-   * Use the current actual bill amount when available.
-   * Subtract anything already paid.
-   */
-  const billObligations = state.bills
-    .filter(
-      bill =>
-        bill.status !== 'Paid' &&
-        isDueWithinForecast(bill.dueOn)
-    )
-    .reduce(
-      (sum, bill) =>
-        sum +
-        Math.max(
-          Number(bill.actual || 0) -
-          Number(bill.paid || 0),
-          0
-        ),
-      0
-    );
-
-  /*
-   * Include active debt payments due during the period.
-   * Payments already recorded this month reduce what
-   * remains required.
-   */
-  const scheduledDebt = state.debts
-    .filter(
-      debt =>
-        debt.status !== 'Paid' &&
-        isDueWithinForecast(debt.dueDate)
-    )
-    .reduce(
-      (sum, debt) =>
-        sum + Number(debt.payment || 0),
-      0
-    );
-
-  const debtObligations =
-    Math.max(scheduledDebt - paid, 0);
-
-  const requiredObligations =
-    billObligations + debtObligations;
-
-  /*
-   * This follows the clearer old forecast:
-   *
-   * Expected Income
-   * minus Required Obligations
-   * equals Projected Position
-   */
-  const projectedPosition =
-    expectedIncome - requiredObligations;
-
-  const forecastMessage =
-    projectedPosition < 0
-      ? `
-        <div class="warning-box">
-          <b>
-            Forecast shortfall ·
-            ${money(Math.abs(projectedPosition))}
-          </b>
-          may still need funding.
-        </div>
-      `
-      : `
-        <div class="recovery-message">
-          <b>
-            Forecast surplus ·
-            ${money(projectedPosition)}
-          </b>
-          remains after required obligations.
-        </div>
-      `;
-
-  const forecastHtml = `
-    <div class="grid-3">
-      ${metric(
-        'EXPECTED INCOME',
-        money(expectedIncome),
-        `From ${expectedItems.length} income ${
-          expectedItems.length === 1
-            ? 'record'
-            : 'records'
-        }`,
-        'positive'
-      )}
-
-      ${metric(
-        'REQUIRED OBLIGATIONS',
-        money(requiredObligations),
-        'Overdue/unpaid bills and debt due in this period'
-      )}
-
-      ${metric(
-        'PROJECTED POSITION',
-        money(projectedPosition),
-        projectedPosition < 0
-          ? 'Projected shortfall'
-          : 'Projected surplus',
-        projectedPosition < 0
-          ? 'negative'
-          : 'positive'
-      )}
-    </div>
-
-    ${forecastMessage}
-  `;
-
-  app.innerHTML = `
-    <div class="metrics">
-      ${metric(
-        'Available this month',
-        money(
-          Object.values(state.funds)
-            .reduce((sum, amount) => sum + amount, 0)
-        ),
-        'Across all categories',
-        'positive'
-      )}
-
-      ${metric(
-        'Due this month',
-        money(debtDue),
-        'Scheduled debt payments'
-      )}
-
-      ${metric(
-        'Paid this month',
-        money(paid),
-        'Debt payments recorded',
-        'positive'
-      )}
-
-      ${metric(
-        'Unpaid this month',
-        money(unpaid),
-        'Bills and debt still due',
-        'negative'
-      )}
-    </div>
-
-    ${card(
-      'Needs attention',
-      attentionHtml,
-      `
-        <button
-          type="button"
-          class="link-button"
-          data-action="attention-all"
-        >
-          View all →
-        </button>
-      `
-    )}
-
-    ${card(
-      'Forecast',
-      forecastHtml,
-      pill(
-        `30 Days · ${shortDate(TODAY)} – ` +
-        `${shortDate(forecastEnd)}`
-      ),
-      'See what’s coming before it becomes due. ' +
-      'Expected income remains planning only.'
-    )}
-
-    <div class="grid-2">
-      ${card(
-        'Monthly allocation',
-        allocationHtml,
-        `
-          <button
-            type="button"
-            class="link-button"
-            data-page="income"
-          >
-            Manage in Income →
-          </button>
-        `,
-        'Current percentages apply only to future income'
-      )}
-
-      ${recoverySnapshotCard()}
-    </div>
-
-    ${card(
-      'Wins & milestones',
-      winsHtml(),
-      `
-        <button
-          type="button"
-          class="link-button"
-          data-page="recovery"
-        >
-          View Recovery →
-        </button>
-      `
-    )}
-
-    ${activitySection('', 'Recent activity')}
-  `;
+function renderNav(){
+  $('#navigation').innerHTML=NAV.map(([key,icon,label])=>`<button class="nav-button ${state.page===key?'active':''}" data-page="${key}" ${state.page===key?'aria-current="page"':''}><span class="nav-icon">${icon}</span>${label}</button>`).join('');
 }
+function go(page){ state.page=page; clearNotice(); saveState(); render(); $('#sidebar').classList.remove('open'); window.scrollTo(0,0); }
+function render(){ renderNav(); const views={dashboard:renderDashboard,income:renderIncome,living:renderLiving,savings:()=>renderFundsPage('savings'),fun:()=>renderFundsPage('fun'),debt:renderDebt,actions:renderActions,recovery:renderRecovery,account:renderAccount}; (views[state.page]||renderDashboard)(); }
+
+function activitySection(category,title='Activity'){
+  const rows=activitiesFor(category).slice(0,4);
+  return card(title,`<div class="activity-list">${rows.length?rows.map(activityRow).join(''):`<div class="empty">No activity recorded yet.</div>`}</div>`,`<button class="link-button" data-action="view-activity" data-category="${category||''}">View all →</button>`);
+}
+function activityRow(a){
+  const isBad=['interest','new-debt','expense','bill','payment','withdrawal'].includes(a.type),isWarning=['correction'].includes(a.type),sign=a.amount>0?'+':'';
+  return `<div class="activity-row"><span class="date">${shortDate(a.date)}</span><span class="activity-icon ${isBad?'bad':isWarning?'warn':''}" aria-hidden="true">${a.amount<0?'↓':'↑'}</span><div><span class="row-title">${h(a.title)}</span><span class="row-subtitle">${h(a.detail||'')}</span></div>${pill(a.type.replaceAll('-',' '),isBad?'bad':isWarning?'gold':'')}<span class="amount ${isBad||a.amount<0?'negative':a.amount>0?'positive':''}">${sign}${money(a.amount)}</span></div>`;
+}
+
+function attentionItems(){
+  const items=[];
+  state.bills.forEach(b=>{const unpaid=Math.max(Number(b.actual)-Number(b.paid||0),0);if(!unpaid)return;const overdue=b.dueOn&&b.dueOn<TODAY;items.push({severity:overdue?'Overdue':'Bill',category:'Living Expenses',name:b.name,amount:unpaid,due:b.dueOn,detail:b.status==='Needs review'?`Actual exceeds the ${money(b.plan)} plan.`:'Current bill remains unpaid.',impact:'Counts toward unpaid obligations.',action:'pay-bill',id:b.id,priority:overdue?1:b.status==='Needs review'?2:4});});
+  state.debts.forEach(d=>{const remaining=Math.max(Number(d.payment)-Number(d.monthlyPaid||0),0);if(!remaining||d.status==='Paid')return;const overdue=d.dueDate&&d.dueDate<TODAY;items.push({severity:overdue?'Overdue':'Debt',category:'Debt',name:d.creditor,amount:remaining,due:d.dueDate,detail:'Scheduled payment remains due.',impact:'Reduces this month’s projected position.',action:'record-payment',id:d.id,priority:overdue?1:3});});
+  Object.entries(state.funds).filter(([,v])=>v<0).forEach(([key,v])=>items.push({severity:'Shortfall',category:labelFor(key),name:`${labelFor(key)} balance`,amount:Math.abs(v),due:'',detail:'The category is below zero.',impact:'Future allocations cover this negative balance first.',action:'move-funds',id:'',priority:2}));
+  state.expected.filter(x=>x.status==='Expected'&&x.date<TODAY).forEach(x=>items.push({severity:'Income overdue',category:'Income',name:x.name,amount:x.amount,due:x.date,detail:'Expected income has not been received or cancelled.',impact:'It should not be counted as available cash.',action:'edit-expected',id:x.id,priority:2}));
+  return items.sort((a,b)=>a.priority-b.priority||(a.due||'9999').localeCompare(b.due||'9999'));
+}
+
+function renderDashboard(){
+  header('Your financial month','See what needs attention and where your money is going.');
+  const debtDue=state.debts.filter(d=>d.dueDate.startsWith(MONTH)).reduce((s,d)=>s+d.payment,0);
+  const paid=Math.abs(activitiesFor('debt').filter(a=>a.type==='payment'&&a.date.startsWith(MONTH)).reduce((s,a)=>s+a.amount,0));
+  const unpaid=Math.max(debtDue-paid,0)+state.bills.reduce((s,b)=>s+Math.max(b.actual-Number(b.paid||0),0),0);
+  const attention=attentionItems().slice(0,4);
+  const attentionHtml=attention.length?`<div class="attention-grid">${attention.map((x,i)=>`<button type="button" class="attention-item ${i%2?'attention-separator':''}" data-action="${x.action}" data-id="${h(x.id)}"><span class="attention-code">${h(x.severity)}</span><div><span class="row-title">${h(x.name)}</span><span class="row-subtitle">${h(x.detail)}</span></div><span class="amount">${money(x.amount)} ›</span></button>`).join('')}</div>`:`<div class="empty">Nothing needs attention right now.</div>`;
+  const allocatedThisMonth=key=>activitiesFor(key).filter(a=>a.type==='allocation'&&a.date.startsWith(MONTH)).reduce((sum,a)=>sum+Math.max(0,a.amount),0);
+  const allocationHtml=state.allocations.map(x=>`<div class="allocation-row"><div><span>${x.name} · ${x.percentage}%</span><b>${money(allocatedThisMonth(x.key))}</b></div>${track(x.percentage,100)}</div>`).join('');
+  const forecastEndDate=new Date(`${TODAY}T00:00:00+08:00`);forecastEndDate.setDate(forecastEndDate.getDate()+29);
+  const forecastEnd=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(forecastEndDate);
+  const inForecast=date=>date&&date>=TODAY&&date<=forecastEnd;
+  const dueInForecast=date=>!date||date<=forecastEnd;
+  const expectedItems=state.expected.filter(x=>x.status==='Expected'&&inForecast(x.date));
+  const expectedIncome=expectedItems.reduce((s,x)=>s+x.amount,0);
+  const billObligations=state.bills.filter(b=>b.status!=='Paid'&&dueInForecast(b.dueOn)).reduce((s,b)=>s+Math.max(b.actual-Number(b.paid||0),0),0);
+  const scheduledDebt=state.debts.filter(d=>d.status!=='Paid'&&dueInForecast(d.dueDate)).reduce((s,d)=>s+d.payment,0);
+  const debtObligations=Math.max(scheduledDebt-paid,0);
+  const requiredObligations=billObligations+debtObligations,projectedPosition=expectedIncome-requiredObligations;
+  const forecast=`<div class="grid-3">${metric('EXPECTED INCOME',money(expectedIncome),`From ${expectedItems.length} income record${expectedItems.length===1?'':'s'}`,'positive')}${metric('REQUIRED OBLIGATIONS',money(requiredObligations),'Overdue/unpaid bills and debt due in this period')}${metric('PROJECTED POSITION',money(projectedPosition),projectedPosition<0?'Projected shortfall':'Projected surplus',projectedPosition<0?'negative':'positive')}</div><div class="${projectedPosition<0?'warning-box':'recovery-message'}"><b>Forecast ${projectedPosition<0?'shortfall':'surplus'} · ${money(Math.abs(projectedPosition))}</b>${projectedPosition<0?' may still need funding.':' remains after required obligations.'}</div>`;
+  app.innerHTML=`
+    <div class="metrics">${metric('Available this month',money(Object.values(state.funds).reduce((a,b)=>a+b,0)),'Across all categories','positive')}${metric('Due this month',money(debtDue),'Scheduled debt payments')}${metric('Paid this month',money(paid),'Debt payments recorded','positive')}${metric('Unpaid this month',money(unpaid),'Bills and debt still due','negative')}</div>
+    ${card('Needs attention',attentionHtml,`<button class="link-button" data-action="attention-all">View all →</button>`)}
+    ${card('Forecast',forecast,pill(`30 Days · ${shortDate(TODAY)} – ${shortDate(forecastEnd)}`),'See what’s coming before it becomes due. Expected income remains planning only.')}
+    <div class="grid-2">${card('Monthly allocation',allocationHtml,`<button type="button" class="link-button" data-page="income">Manage in Income →</button>`,'Current percentages apply only to future income')}${recoverySnapshotCard()}</div>
+    ${card('Wins & milestones',winsHtml(),`<button class="link-button" data-page="recovery">View Recovery →</button>`)}
+    ${activitySection('', 'Recent activity')}`;
+}
+
+function renderIncome(){
+  header('Income','Record received income and plan what is expected.',button('+ Add income','add-income'));
+  const incomeRows=state.incomes.map(i=>`<div class="list-row compact"><span class="date">${shortDate(i.date)}</span><div><span class="row-title">${h(i.description)}</span><span class="row-subtitle">${h(i.source)} · allocated automatically</span></div><span class="amount positive">+${money(i.amount)}</span><button class="button-secondary" data-action="income-breakdown" data-id="${h(i.id)}">Breakdown</button></div>`).join('');
+  const expectedRows=state.expected.map(i=>`<div class="list-row compact"><span class="date">${shortDate(i.date)}</span><div><span class="row-title">${h(i.name)}</span><span class="row-subtitle">${h(i.source)} · expected ${money(i.amount)}</span></div>${pill(i.status,i.status==='Received'?'':i.status==='Cancelled'?'bad':'gold')}<div class="row-actions"><span class="amount">${money(i.amount)}</span>${i.status==='Expected'?`<button type="button" class="button-secondary" data-action="receive-expected" data-id="${h(i.id)}">Receive</button><button type="button" class="button-ghost" data-action="edit-expected" data-id="${h(i.id)}">Edit</button><button type="button" class="button-ghost negative" data-action="cancel-expected" data-id="${h(i.id)}">Cancel</button>`:''}</div></div>`).join('');
+  const allocationHtml=state.allocations.map(x=>`<div class="allocation-row"><div><span>${x.name}</span><b>${x.percentage}%</b></div>${track(x.percentage,100)}</div>`).join('');
+  app.innerHTML=`<div class="grid-2">${card('Income received',`<div class="list">${incomeRows}</div>`,'','Allocation is recorded with every received income')}${card('Expected income',`<div class="list">${expectedRows}</div>`,`<button type="button" class="link-button" data-action="manage-income">Manage plans</button>`)}</div>${card('Allocation percentages',allocationHtml,`<button type="button" class="link-button" data-action="allocation-settings">Manage percentages</button>`,'Changes apply to future income only.')}${activitySection('income','Income activity')}`;
+}
+
+function recoverySnapshotCard(){
+  if(!state.journey)return card('Recovery snapshot','<div class="empty">Recovery journey not started.</div>',`<button type="button" class="link-button" data-page="recovery">Set up Recovery →</button>`);
+  const change=currentDebt()-state.journey.startingDebt;
+  return card('Recovery snapshot',`<div class="recovery-hero"><div class="recovery-stat"><span class="metric-label">Starting debt</span><strong class="metric-value">${money(state.journey.startingDebt)}</strong></div><div class="recovery-stat"><span class="metric-label">Current debt</span><strong class="metric-value">${money(currentDebt())}</strong></div><div class="recovery-stat"><span class="metric-label">Change</span><strong class="metric-value ${change>0?'negative':'positive'}">${change>0?'+':''}${money(change)}</strong></div><div class="recovery-stat"><span class="metric-label">Recovered</span><strong class="metric-value">${Number(state.recoverySummary?.recoveredPercentage||0).toFixed(1)}%</strong></div></div>`,`<button type="button" class="link-button" data-page="recovery">View Recovery →</button>`);
+}
+
+function renderLiving(){
+  const planned=state.bills.reduce((s,b)=>s+b.plan,0)+state.budgets.reduce((s,b)=>s+b.plan,0);
+  const spent=Math.abs(activitiesFor('living').filter(a=>['expense','bill'].includes(a.type)&&a.date.startsWith(MONTH)).reduce((s,a)=>s+Math.min(0,a.amount),0));
+  const due=state.bills.reduce((s,b)=>s+Math.max(b.actual-Number(b.paid||0),0),0);
+  header('Living Expenses','Stay ahead of bills and everyday spending.',button('Manage Cost of Living','manage-cost-plans','button-secondary')+button('Record current bill','record-current-bill','button-secondary')+button('+ Add funds','add-funds')+button('+ Record expense','record-expense'));
+  const bills=state.bills.map(b=>`<div class="list-row"><span class="date">${String(b.dueDay).padStart(2,'0')}</span><div><span class="row-title">${h(b.name)}</span><span class="row-subtitle">${b.actual>b.plan?`Actual is ${money(b.actual-b.plan)} above the ${money(b.plan)} plan`:'Monthly bill'}</span></div>${pill(b.status,b.status==='Needs review'?'bad':'')}<span class="amount">${money(Math.max(b.actual-Number(b.paid||0),0))}</span><div class="row-actions">${b.status!=='Paid'?`<button class="button-secondary" data-action="pay-bill" data-id="${h(b.id)}">Pay</button>`:''}</div></div>`).join('');
+  const budgets=state.budgets.map(b=>`<div class="goal-row"><div><span class="row-title">${h(b.name)}</span><span class="row-subtitle">${money(b.spent)} of ${money(b.plan)}</span></div><div>${track(b.spent,b.plan,b.spent>b.plan?'coral':'')}</div><span class="amount">${money(b.plan-b.spent)}</span><button class="button-secondary" data-action="log-expense" data-id="${h(b.id)}">Log expense</button></div>`).join('');
+  app.innerHTML=`<div class="metrics">${metric('Monthly plan',money(planned))}${metric('Paid / spent',money(spent))}${metric('Still due',money(due),'Unpaid bills','negative')}${metric('Available funds',money(state.funds.living),'Living Expenses balance','positive')}</div><div class="grid-2">${card('Bills',`<div class="list">${bills||'<div class="empty">No active bill plans.</div>'}</div>`)}${card('Monthly spending',`<div class="goal-list">${budgets||'<div class="empty">No active spending budgets.</div>'}</div>`)}</div>${activitySection('living','Living Expenses activity')}`;
+}
+
+function renderFundsPage(type){
+  const isSavings=type==='savings', label=isSavings?'Savings':'Fun', pool=state.funds[type], goals=state.goals[type];
+  header(label,isSavings?'Separate available money from savings goals.':'Track discretionary funds and goals.',button('+ Add funds','add-funds')+button('Use funds','use-funds','button-secondary'));
+  const reserved=goals.reduce((s,g)=>s+g.balance,0);
+  const rows=goals.map(g=>`<div class="goal-row"><div><span class="row-title">${h(g.name)}</span><span class="row-subtitle">${g.type==='continuous'?'Continuous fund · no target':`${money(g.balance)} of ${money(g.target)}`}</span></div><div>${g.target?track(g.balance,g.target):'<span class="micro">No target · keep adding anytime</span>'}</div><span class="goal-balance amount">${money(g.balance)}</span><div class="row-actions"><button class="button-secondary" data-action="allocate-goal" data-id="${h(g.id)}">Allocate</button><button class="button-ghost" data-action="use-funds" data-id="${h(g.id)}">Use</button></div></div>`).join('');
+  app.innerHTML=`<div class="metrics">${metric(`Available ${label}`,money(pool),'Not assigned to a goal','positive')}${metric('Reserved in goals',money(reserved))}${metric('Added this month',money(activitiesFor(type).filter(a=>a.date.startsWith(MONTH)&&a.amount>0).reduce((s,a)=>s+a.amount,0)),'Allocations and direct funds','positive')}</div><div class="grid-2"><div class="fund-pool"><span class="eyebrow">AVAILABLE ANYTIME</span><h2>Power ${label}</h2><strong class="metric-value">${money(pool)}</strong><p class="page-subtitle">Money not assigned to a specific goal.</p></div>${card(`${label} goals`,`<div class="goal-list">${rows}</div>`,`<button class="link-button" data-action="new-goal">New goal</button>`)}</div>${activitySection(type,`${label} activity`)}`;
+}
+
+function renderDebt(){
+  const due=state.debts.filter(d=>d.dueDate.startsWith(MONTH)).reduce((s,d)=>s+d.payment,0);
+  const paid=Math.abs(activitiesFor('debt').filter(a=>a.type==='payment'&&a.date.startsWith(MONTH)).reduce((s,a)=>s+a.amount,0));
+  const unpaid=Math.max(due-paid,0);
+  header('Debt','Understand every balance, due date, agreement, and change.',button('Add funds','add-funds','button-secondary')+button('Record payment','record-payment','button-secondary')+button('+ Add debt','add-debt'));
+  const rows=state.debts.map(d=>`<tr><td data-label="Creditor / agreement"><span class="debt-name">${h(d.creditor)}</span><span class="row-subtitle">${h(interestLabel(d))}</span></td><td data-label="Status">${pill(d.status,d.status==='Overdue'?'bad':d.status==='Paused'?'gold':'')}</td><td data-label="Next due">${shortDate(d.dueDate)}</td><td data-label="Payment" class="amount">${money(d.payment)}</td><td data-label="Balance" class="amount">${money(d.balance)}</td><td data-label="Actions"><div class="row-actions"><button type="button" class="button-secondary" data-action="record-payment" data-id="${h(d.id)}">Pay</button><button type="button" class="button-ghost" data-action="debt-history" data-id="${h(d.id)}">History</button></div></td></tr>`).join('');
+  app.innerHTML=`<div class="metrics five">${metric('Current debt',money(currentDebt()))}${metric('Debt funds available',money(state.funds.debt),'Ready for payments','positive')}${metric('Due this month',money(due))}${metric('Paid this month',money(paid),'Recorded payments','positive')}${metric('Unpaid this month',money(unpaid),'Still required','negative')}</div>${card('Debt accounts',`<div style="overflow:auto"><table class="debt-table"><thead><tr><th>Creditor / agreement</th><th>Status</th><th>Next due</th><th class="amount">Payment</th><th class="amount">Balance</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,`<button class="link-button" data-action="view-debts">View all debt accounts →</button>`)}${activitySection('debt','Recent debt activity')}`;
+}
+function interestLabel(d){ if(d.interestMode==='none')return'No interest'; if(d.interestMode==='included')return'Interest included in total'; if(d.interestMode==='fixed')return`${money(d.interestValue)} fixed ${d.interestFrequency} interest`; return`${d.interestValue}% ${d.interestFrequency} interest`; }
+
+function renderActions(){
+  header('Actions','Move existing funds from one category to another.');
+  const rows=state.transfers.slice().reverse().map(t=>`<div class="list-row compact"><span class="date">${shortDate(t.date)}</span><div><span class="row-title">${labelFor(t.from)} → ${labelFor(t.to)}</span><span class="row-subtitle">Fund transfer</span></div><span class="amount">${money(t.amount)}</span><span></span></div>`).join('');
+  const needs={living:state.bills.reduce((s,b)=>s+Math.max(b.actual-Number(b.paid||0),0),0),debt:state.debts.reduce((s,d)=>s+Math.max(d.payment-Number(d.monthlyPaid||0),0),0),savings:null,fun:null};
+  const coverage=Object.keys(state.funds).map(k=>`<tr><td>${labelFor(k)}</td><td class="amount">${money(state.funds[k])}</td><td class="amount">${needs[k]===null?'—':money(needs[k])}</td><td>${needs[k]===null?'Flexible':state.funds[k]>=needs[k]?'Covered':`Short ${money(needs[k]-state.funds[k])}`}</td></tr>`).join('');
+  const options=Object.keys(state.funds).map(k=>`<option value="${k}">${labelFor(k)} · ${money(state.funds[k])}</option>`).join('');
+  const moveForm=`<form id="moveForm" class="form-grid"><div class="field"><label>From</label><select name="from" required>${options}</select></div><div class="field"><label>To</label><select name="to" required>${options}</select></div>${field('Amount','amount','number','','min="0.01" step="0.01" required')}${field('Transfer date','date','date',TODAY,'required')}<div class="transfer-preview full">Enter an amount to preview the balances after this move.</div><div class="modal-actions full"><button type="submit" class="button">Move money</button></div></form>`;
+  app.innerHTML=`${card('Category coverage',`<div class="table-wrap"><table class="debt-table"><thead><tr><th>Category</th><th class="amount">Available</th><th class="amount">Still needed</th><th>Coverage</th></tr></thead><tbody>${coverage}</tbody></table></div>`,'','See what is available before moving money.')}`+`<div class="grid-2">${card('Recent moves',rows?`<div class="list">${rows}</div>`:`<div class="empty">No fund transfers recorded yet.</div>`)}${card('Move money',moveForm,'','Transfers change category balances only; they are not income or expenses.')}</div>`;
+}
+
+function renderRecovery(){
+  if(!state.journey){header('Recovery','Review your active debts before starting the recovery journey.');app.innerHTML=card('Set up your recovery journey',`<p class="page-subtitle">Starting debt will be fixed from all active balances only after you confirm.</p><div class="breakdown-box">${state.debts.map(d=>`<div class="breakdown-row"><span>${h(d.creditor)}</span><b>${money(d.balance)}</b></div>`).join('')}<div class="breakdown-row total"><span>Starting debt at confirmation</span><b>${money(currentDebt())}</b></div></div>`,button('Start Recovery Journey','start-journey'));return;}
+  const current=currentDebt(), change=current-state.journey.startingDebt,recovered=state.recoverySummary?.recoveredPercentage??Math.max(0,(state.journey.startingDebt-current)/Math.max(state.journey.startingDebt,1)*100);
+  header('Recovery','See how far you’ve come and where you’re headed.');
+  app.innerHTML=`<div class="split-wide">${card('Your debt recovery',`<div class="recovery-hero"><div class="recovery-stat"><span class="metric-label">Starting debt</span><strong class="metric-value">${money(state.journey.startingDebt)}</strong><span class="metric-note">${shortDate(state.journey.startDate)}</span></div><div class="recovery-stat"><span class="metric-label">Current debt</span><strong class="metric-value">${money(current)}</strong><span class="metric-note">As of ${shortDate(TODAY)}</span></div><div class="recovery-stat"><span class="metric-label">Overall ${change>0?'increase':'reduction'}</span><strong class="metric-value ${change>0?'negative':'positive'}">${change>0?'+':''}${money(change)}</strong><span class="metric-note">Since journey start</span></div><div class="recovery-stat"><span class="metric-label">Recovered</span><strong class="metric-value">${Number(recovered).toFixed(1)}%</strong></div></div><div class="recovery-message">${change>0?`Your debt is currently ${money(change)} above your starting balance.`:`You have recovered ${money(Math.abs(change))} since your journey began.`}</div>`)}${card('Recovery goal',`<div class="breakdown-row"><span>Journey start</span><b>${shortDate(state.journey.startDate)}</b></div><div class="breakdown-row"><span>Starting debt</span><b>${money(state.journey.startingDebt)}</b></div><div class="breakdown-row"><span>Target balance</span><b>${money(state.journey.targetBalance)}</b></div><div class="breakdown-row"><span>Target date</span><b>${state.journey.targetDate?shortDate(state.journey.targetDate):'Not set'}</b></div><div class="recovery-message">Journey Start and Starting Debt stay fixed.</div>`,`<div class="row-actions"><button class="link-button" data-action="journey-details">Details</button><button class="link-button" data-action="edit-recovery">Edit</button></div>`)}</div><div class="grid-2">${card('Your debt over time',graphHtml(),'','Monthly movement of your total debt balance')}${card(`Payments vs adjustments — ${new Date(TODAY+'T00:00:00').toLocaleDateString('en-PH',{month:'long'})}`,breakdownHtml())}</div>${card('Wins & milestones',winsHtml(),`<button class="link-button" data-action="milestones-all">View all →</button>`)}${card('Recovery timeline',recoveryTimeline(),`<button class="link-button" data-action="milestones-all">View all →</button>`,'Only debts cleared and meaningful recovery milestones')}`;
+}
+function graphHtml(){
+  const points=state.recoveryPoints.length?state.recoveryPoints:[{date:TODAY,balance:currentDebt()}],values=points.map(x=>x.balance), rawMin=Math.min(...values),rawMax=Math.max(...values),min=rawMin===rawMax?rawMin*.98:rawMin*.98,max=rawMin===rawMax?rawMax*1.02:rawMax*1.02,w=720,h=250,pad=34;
+  const pts=values.map((v,i)=>[values.length===1?w/2:pad+i*(w-pad*2)/(values.length-1),h-pad-(v-min)/Math.max(max-min,1)*(h-pad*2)]);
+  const line=pts.map(p=>p.join(',')).join(' '), area=`${pad},${h-pad} ${line} ${w-pad},${h-pad}`;
+  return `<div class="line-graph"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Debt balance trend"><defs><linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e8067" stop-opacity=".30"/><stop offset="1" stop-color="#1e8067" stop-opacity=".02"/></linearGradient></defs>${[.25,.5,.75].map(v=>`<line class="graph-grid" x1="${pad}" x2="${w-pad}" y1="${pad+(h-pad*2)*v}" y2="${pad+(h-pad*2)*v}"/>`).join('')}<polygon class="graph-area" points="${area}"/><polyline class="graph-line" points="${line}"/>${pts.map((p,i)=>`<circle class="graph-dot" cx="${p[0]}" cy="${p[1]}" r="5"/><text class="graph-label" text-anchor="middle" x="${p[0]}" y="${h-5}">${new Date(points[i].date+'T00:00:00').toLocaleDateString('en-PH',{month:'short'})}</text>`).join('')}</svg></div>`;
+}
+function breakdownHtml(){
+  const b=state.recoveryBreakdown||{payments:0,negotiated:0,corrections:0,interest:0,newDebt:0},data=[['Payments made',b.payments,'positive'],['Negotiated reductions',b.negotiated,'positive'],['Corrections',b.corrections,''],['Interest added',b.interest,'negative'],['Debt added',b.newDebt,'negative']];
+  const net=data.reduce((s,x)=>s+x[1],0);
+  return data.map(x=>`<div class="breakdown-row"><span>${x[0]}</span><b class="${x[2]}">${x[1]>0?'+':''}${money(x[1])}</b></div>`).join('')+`<div class="breakdown-row total"><span>Net balance change</span><b class="${net>0?'negative':'positive'}">${net>0?'+':''}${money(net)}</b></div>`;
+}
+function winsHtml(){
+  const cleared=state.recoverySummary?.debtsCleared??state.debts.filter(d=>d.balance<=.001).length;
+  const streak=state.journey?(state.recoverySummary?.noNewDebtDays??Math.max(0,Math.floor((new Date(TODAY)-new Date(state.journey.noNewDebtSince))/86400000))):0,negotiated=Math.abs(state.recoveryBreakdown?.negotiated??0);
+  return `<div class="wins-grid"><div class="win-card"><span class="win-icon">✓</span><span class="row-title">No new debt streak</span><span class="metric-value">${state.journey?`${streak} days`:'Not started'}</span><span class="row-subtitle">${state.journey?'Keep protecting the progress':'Starts when the journey is confirmed'}</span></div><div class="win-card"><span class="win-icon">★</span><span class="row-title">Debts cleared</span><span class="metric-value">${cleared}</span><span class="row-subtitle">Accounts fully paid and closed</span></div><div class="win-card"><span class="win-icon">↘</span><span class="row-title">Negotiated recovery</span><span class="metric-value">${money(negotiated)}</span><span class="row-subtitle">Balance formally reduced</span></div></div>`;
+}
+function recoveryTimeline(){
+  const rows=state.activities.filter(a=>['cleared','milestone','negotiated'].includes(a.type)).slice(0,4);
+  return `<div class="activity-list">${rows.length?rows.map(activityRow).join(''):`<div class="empty">Debt-cleared and recovery milestones will appear here.</div>`}</div>`;
+}
+
+function renderAccount(){
+  header('Account','Manage access, privacy, and your records.');
+  const access=state.accountAccess||{status:'Active',plan:'Development entitlement',endsOn:''};app.innerHTML=`<div class="grid-2">${card('Access',`<div class="breakdown-row"><span>Status</span>${pill(access.status)}</div><div class="breakdown-row"><span>Plan</span><b>${access.plan}</b></div>${access.endsOn?`<div class="breakdown-row"><span>Access until</span><b>${shortDate(access.endsOn)}</b></div>`:''}<div class="breakdown-row"><span>Renewal</span><b>Not automatic</b></div><div class="recovery-message">Renewal reminders will offer Payhip or external renewal through support.</div><div class="row-actions account-actions"><button type="button" class="button-secondary" data-action="logout">Log out</button></div>`)}${card('Your data',`<p>Export your records or request account deletion. Deletion removes live financial/profile data after confirmation; temporary backups normally expire within 30 days.</p><div class="row-actions" style="justify-content:flex-start"><button type="button" class="button-secondary" data-action="export-data">Export data</button><button type="button" class="button-ghost negative" data-action="delete-account">Delete account</button></div>`)}</div>`;
+}
+
+function labelFor(key){ return ({living:'Living Expenses',debt:'Debt',savings:'Savings',fun:'Fun'})[key]||key; }
+let modalReturnFocus=null;
+function openModal(config){
+  const root=$('#modalRoot');modalReturnFocus=document.activeElement;
+  const readOnly=config.form==='noop';
+  root.innerHTML=`<div class="modal-backdrop" role="presentation"><section class="modal-panel ${config.wide?'wide':''}" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-header"><div><h2 id="modalTitle">${h(config.title)}</h2><p>${h(config.subtitle||'')}</p></div><button type="button" class="close-button" data-action="close-modal" aria-label="Close">×</button></div><form id="modalForm" method="post" action="javascript:void(0)" data-form="${h(config.form)}">${config.body}<div id="modalError" role="alert" aria-live="assertive"></div><div class="modal-actions">${readOnly?'':`<button type="button" class="button-secondary" data-action="close-modal">Cancel</button>`}<button type="${readOnly?'button':'submit'}" class="button" ${readOnly?'data-action="close-modal"':''}>${h(config.submit||'Save')}</button></div></form></section></div>`;
+  root.querySelector('input,select,button')?.focus();
+}
+const field=(label,name,type='text',value='',extra='',full='')=>`<div class="field ${full}"><label for="${h(name)}">${h(label)}</label><input id="${h(name)}" name="${h(name)}" type="${h(type)}" value="${h(value)}" ${extra}></div>`;
+const selectField=(label,name,options,full='')=>`<div class="field ${full}"><label for="${h(name)}">${h(label)}</label><select id="${h(name)}" name="${h(name)}">${options.map(o=>`<option value="${h(o[0])}">${h(o[1])}</option>`).join('')}</select></div>`;
+function closeModal(){ $('#modalRoot').innerHTML='';modalReturnFocus?.focus?.();modalReturnFocus=null; }
+function modalError(message){ $('#modalError').innerHTML=`<div class="warning-box">${h(message)}</div>`; }
+function downloadExport(data){const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='debt-recovery-system-export.json';a.click();URL.revokeObjectURL(a.href);}
+
+function actionModal(action,id){
+  clearNotice();
+  const type=state.page;
+  if(action==='add-income') return openModal({title:'Record income received',subtitle:'This income will use the current allocation percentages.',form:'income',submit:'Review allocation',body:`<div class="form-grid">${field('Date received','date','date',TODAY,'required')}${selectField('Income source','source',[['Salary','Expected salary'],['Freelance','Freelance'],['Business','Business'],['Gift','Gift'],['Other income','Other income']])}${field('Description','description','text','','required','full')}${field('Amount','amount','number','','min="0.01" step="0.01" required','full')}</div><div class="breakdown-box">${state.allocations.map(a=>`<div class="breakdown-row"><span>${a.name} · ${a.percentage}%</span><b>Calculated after amount is entered</b></div>`).join('')}</div>`});
+  if(action==='add-funds') return openModal({title:`Add funds to ${labelFor(type)}`,subtitle:'This goes only to this page and will not be auto-allocated.',form:'add-funds',body:`<div class="warning-box">To distribute income across categories, use Add Income on the Income page.</div><div class="form-grid">${field('Date','date','date',TODAY,'required')}${selectField('Source','source',[['Freelance','Freelance'],['Business','Business'],['Gift','Gift'],['Other','Other']])}${field('Amount','amount','number','','min="0.01" step="0.01" required')}${field('Note','note','text','','','full')}</div>`});
+  if(action==='record-expense') return expenseModal();
+  if(action==='log-expense') return expenseModal(id);
+  if(action==='pay-bill'){ const b=state.bills.find(x=>x.id===id),outstanding=Math.max(b.actual-Number(b.paid||0),0); return openModal({title:`Pay ${b.name}`,subtitle:`Amount due: ${money(outstanding)}`,form:'pay-bill',body:`<input type="hidden" name="id" value="${id}"><div class="form-grid">${field('Payment date','date','date',TODAY,'required')}${field('Amount','amount','number',outstanding,'min="0.01" step="0.01" required')}</div>`}); }
+  if(action==='allocate-goal'){ const g=state.goals[type].find(x=>x.id===id); return openModal({title:`Allocate to ${g.name}`,subtitle:`Available Power ${labelFor(type)}: ${money(state.funds[type])}`,form:'allocate-goal',body:`<input type="hidden" name="id" value="${id}"><div class="form-grid">${field('Date','date','date',TODAY,'required')}${field('Amount','amount','number','','min="0.01" step="0.01" required')}</div>`}); }
+  if(action==='use-funds'){ const goals=state.goals[type]||[]; const options=[]; if(state.funds[type]>0)options.push(['pool',`Power ${labelFor(type)} · ${money(state.funds[type])}`]); goals.forEach(g=>options.push([g.id,`${g.name} · ${money(g.balance)}`])); return openModal({title:`Use ${labelFor(type)} funds`,subtitle:'Choose the exact source of the funds.',form:'use-funds',body:`<input type="hidden" name="preferred" value="${id||''}"><div class="form-grid">${field('Date','date','date',TODAY,'required')}${selectField('Use funds from','source',options)}${field('Amount','amount','number','','min="0.01" step="0.01" required')}${field('Purpose','note','text','','required','full')}</div>`}); }
+  if(action==='new-goal') return openModal({title:`Create ${labelFor(type)} goal`,subtitle:'Choose a target, sinking fund, or continuous fund.',form:'new-goal',body:`<div class="form-grid">${field('Goal name','name','text','','required','full')}${selectField('Goal type','goalType',[['target','Target amount'],['sinking','Sinking fund'],['continuous','Continuous / no target']])}${field('Target amount','target','number','','min="0" step="0.01"')}</div>`});
+  if(action==='record-payment'){ const options=state.debts.map(d=>[d.id,`${d.creditor} · ${money(d.balance)}`]); return openModal({title:'Record debt payment',subtitle:`Available Debt funds: ${money(state.funds.debt)}`,form:'debt-payment',body:`<div class="form-grid">${field('Payment date','date','date',TODAY,'required')}${selectField('Debt account','debtId',options)}${field('Payment amount','amount','number','','min="0.01" step="0.01" required')}${field('Note','note','text','','','full')}</div>`}); }
+  if(action==='add-debt') return addDebtModal();
+  if(action==='debt-history') return debtHistory(id);
+  if(action==='update-debt'){
+    const d=state.debts.find(x=>x.id===id); closeModal();
+    return openModal({title:`Update ${d.creditor}`,subtitle:'Changes apply from the effective date and do not rewrite earlier history.',form:'update-debt',wide:true,body:`<input type="hidden" name="id" value="${id}"><div class="form-grid">${field('Effective date','date','date',TODAY,'required')}${selectField('Reason','reason',[['agreement','Agreement change'],['negotiated','Negotiated reduction'],['correction','Correction of incorrect entry']])}${field('Current balance','balance','number',d.balance,'min="0" step="0.01" required')}${field('Payment amount','payment','number',d.payment,'min="0" step="0.01" required')}${selectField('Status','status',[['Upcoming','Active / upcoming'],['Paused','Payments paused — interest may continue']])}${selectField('Interest setup','interestMode',[['none','No interest'],['included','Interest included in total'],['percentage','Separate percentage interest'],['fixed','Exact fixed interest amount']])}${selectField('Interest frequency','frequency',[['monthly','Monthly'],['weekly','Weekly'],['daily','Daily']])}${field('Interest rate or fixed amount','interestValue','number',d.interestValue,'min="0" step="0.01"')}</div>`});
+  }
+  if(action==='archive-debt'){
+    const d=state.debts.find(x=>x.id===id);
+    if(!d||d.balance>.001){ closeModal(); return notice('Only a fully paid debt can be archived.',true); }
+    if(window.DRS_API?.live){closeModal();window.DRS_API.request('/api/debts/archive',{method:'POST',body:JSON.stringify({debtId:id})}).then(()=>hydrateLive()).then(render).then(()=>notice(`${d.creditor} was archived as fully paid.`)).catch(error=>notice(error.message,true));return;}
+    state.archivedDebts=state.archivedDebts||[]; state.archivedDebts.push(d); state.debts=state.debts.filter(x=>x.id!==id);
+    addActivity('debt','archive',`Paid debt archived · ${d.creditor}`,'Closure only; no Recovery adjustment',0,TODAY); saveState(); closeModal(); render(); return notice(`${d.creditor} was archived as fully paid.`);
+  }
+  if(action==='move-funds') return openModal({title:'Move funds',subtitle:'Transfer existing money between categories.',form:'transfer',body:`<div class="form-grid">${field('Date','date','date',TODAY,'required')}${selectField('From category','from',state.allocations.map(a=>[a.key,`${a.name} · ${money(state.funds[a.key])}`]))}${selectField('To category','to',state.allocations.map(a=>[a.key,a.name]))}${field('Amount','amount','number','','min="0.01" step="0.01" required')}</div>`});
+  if(action==='journey-details') return journeyDetails();
+  if(action==='edit-recovery') return openModal({title:'Edit recovery goal',subtitle:'Journey Start and Starting Debt remain fixed.',form:'recovery-goal',body:`<div class="form-grid">${field('Target balance','targetBalance','number',state.journey.targetBalance,'min="0" step="0.01" required')}${field('Target date','targetDate','date',state.journey.targetDate,'')}</div>`});
+  if(action==='allocation-settings'){if(state.page!=='income')return go('income');return allocationModal();}
+  if(action==='start-journey') return openModal({title:'Start Recovery Journey',subtitle:'This permanently fixes the journey start and starting debt. Later debts will be recorded as Debt Added.',form:'start-journey',submit:'Confirm journey start',body:`<div class="form-grid">${field('Journey date','date','date',TODAY,'required')}${field('Target balance','targetBalance','number','0','min="0" step="0.01" required')}${field('Target date','targetDate','date','','','full')}</div><div class="breakdown-box"><div class="breakdown-row total"><span>Starting debt at confirmation</span><b>${money(currentDebt())}</b></div></div><div class="warning-box">Confirm only after all current debts are recorded.</div>`});
+  if(action==='income-breakdown') return incomeBreakdown(id);
+  if(action==='view-activity') return allActivity(id);
+  if(action==='manage-income') return openModal({title:'Add expected income',subtitle:'Plan a future salary or other income. This does not add funds until received.',form:'expected-income',body:`<div class="form-grid">${field('Expected date','date','date',TODAY,'required')}${selectField('Source','source',[['Salary','Salary'],['Freelance','Freelance'],['Business','Business'],['Other income','Other income']])}${field('Plan name','name','text','','required')}${field('Expected amount','amount','number','','min="0.01" step="0.01" required')}</div>`});
+  if(action==='edit-expected'){const item=state.expected.find(x=>x.id===id);if(!item)return;return openModal({title:`Edit ${item.name}`,subtitle:'Editing a plan does not add funds.',form:'expected-income-update',body:`<input type="hidden" name="id" value="${h(id)}"><div class="form-grid">${field('Expected date','date','date',item.date,'required')}${selectField('Source','source',[['Salary','Salary'],['Freelance','Freelance'],['Business','Business'],['Other income','Other income']])}${field('Plan name','name','text',item.name,'required')}${field('Expected amount','amount','number',item.amount,'min="0.01" step="0.01" required')}</div>`});}
+  if(action==='cancel-expected'){const item=state.expected.find(x=>x.id===id);if(!item)return;return openModal({title:`Cancel ${item.name}?`,subtitle:'The plan will remain in history and will not be included in the forecast.',form:'expected-income-cancel',submit:'Cancel plan',body:`<input type="hidden" name="id" value="${h(id)}"><div class="warning-box">No money will be removed because expected income is planning only.</div>`});}
+  if(action==='receive-expected'){const item=state.expected.find(x=>x.id===id);return openModal({title:`Receive ${item.name}`,subtitle:'The actual amount will be allocated using the percentages effective on the received date.',form:'receive-expected',submit:'Receive and allocate',body:`<input type="hidden" name="id" value="${id}"><div class="form-grid">${field('Date received','date','date',TODAY,'required')}${field('Actual amount','amount','number',item.amount,'min="0.01" step="0.01" required')}</div>`});}
+  if(action==='manage-cost-plans') return openModal({title:'Manage Cost of Living',subtitle:'Maintain bills and budgets in one table. Changes begin on the selected effective date.',form:'cost-plans',wide:true,body:`<div class="cost-table" id="costRows">${costPlanRows()}</div><button type="button" class="button-secondary add-cost-row" data-action="add-cost-row">+ Add row</button>`});
+  if(action==='record-current-bill'){const options=state.bills.map(b=>[b.id,`${b.name} · plan ${money(b.plan)}`]);if(!options.length)return notice('Add an active bill plan first.',true);return openModal({title:'Record current bill',subtitle:'Record the actual amount due. Payment is a separate action.',form:'record-current-bill',body:`<div class="form-grid">${selectField('Bill plan','planId',options)}${field('Billing month','billingMonth','month',MONTH,'required')}${field('Due date','dueOn','date',TODAY,'required')}${field('Actual amount','actual','number','','min="0.01" step="0.01" required')}</div>`});}
+  if(action==='manage-bills') return openModal({title:'Add or update a bill plan',subtitle:'The bill stays due until a payment is recorded.',form:'bill-plan',body:`<div class="form-grid">${field('Bill name','name','text','','required')}${field('Monthly plan','plan','number','','min="0.01" step="0.01" required')}${field('Due day','dueDay','number','','min="1" max="31" required')}${field('Current actual amount','actual','number','','min="0" step="0.01" required')}</div>`});
+  if(action==='manage-budgets') return openModal({title:'Set a monthly spending budget',subtitle:'Create or update an everyday spending category.',form:'budget-plan',body:`<div class="form-grid">${field('Budget name','name','text','','required')}${field('Monthly amount','plan','number','','min="0.01" step="0.01" required')}</div>`});
+  if(action==='view-debts') return openModal({title:'All debt accounts',subtitle:`${state.debts.length} active accounts`,form:'noop',wide:true,submit:'Close',body:`<table class="debt-table"><thead><tr><th>Creditor</th><th>Status</th><th>Next due</th><th class="amount">Balance</th></tr></thead><tbody>${state.debts.map(d=>`<tr><td><span class="debt-name">${d.creditor}</span><span class="row-subtitle">${interestLabel(d)}</span></td><td>${pill(d.status,d.status==='Overdue'?'bad':'')}</td><td>${shortDate(d.dueDate)}</td><td class="amount">${money(d.balance)}</td></tr>`).join('')}</tbody></table>`});
+  if(action==='milestones-all') return openModal({title:'Wins and recovery milestones',subtitle:'Only meaningful recovery progress is shown here.',form:'noop',wide:true,submit:'Close',body:`${winsHtml()}<div style="height:18px"></div>${recoveryTimeline()}`});
+  if(action==='attention-all'){const items=attentionItems();return openModal({title:'Needs attention',subtitle:'Items requiring review before the month is settled.',form:'noop',wide:true,submit:'Close',body:items.length?`<div class="attention-detail-list">${items.map(x=>`<div class="attention-detail"><div><span class="attention-code">${h(x.severity)} · ${h(x.category)}</span><span class="row-title">${h(x.name)}</span><span class="row-subtitle">${h(x.detail)} ${h(x.impact)}</span></div><div><span class="amount">${money(x.amount)}</span><span class="row-subtitle">${x.due?`Due ${shortDate(x.due)}`:'No due date'}</span></div><button type="button" class="button-secondary" data-action="${x.action}" data-id="${h(x.id)}">Review</button></div>`).join('')}</div>`:'<div class="empty">Nothing needs attention right now.</div>'});}
+  if(action==='logout'){if(!window.DRS_API?.live)return notice('Log out is available when connected to the live service.',true);window.DRS_API.request('/api/auth/logout',{method:'POST',body:'{}'}).then(()=>location.reload()).catch(error=>notice(error.message,true));return;}
+  if(action==='export-data'){ if(window.DRS_API?.live){window.DRS_API.request('/api/account/export').then(downloadExport).catch(error=>notice(error.message,true));return;} downloadExport(state);return; }
+  notice('This control is included in the Build and its detailed management view is being validated.');
+}
+function expenseModal(id=''){ const budget=state.budgets.find(b=>b.id===id); openModal({title:budget?`Log ${budget.name} expense`:'Record an unlisted expense',subtitle:'This reduces available Living Expenses funds.',form:'expense',body:`<input type="hidden" name="budgetId" value="${id}"><div class="form-grid">${field('Expense date','date','date',TODAY,'required')}${field('Amount','amount','number','','min="0.01" step="0.01" required')}${field('Description','description','text',budget?.name||'','required','full')}</div>`}); }
+function addDebtModal(){ openModal({title:'Add debt',subtitle:'Record the current balance and agreement. You do not need to reconstruct the original debt.',form:'add-debt',wide:true,body:`<div class="form-grid">${field('Creditor / account','creditor','text','','required')}${field('Current balance','balance','number','','min="0.01" step="0.01" required')}${field('Agreement due / effective date','dueDate','date',TODAY,'required')}${field('Payment amount','payment','number','','min="0" step="0.01" required')}${selectField('Interest setup','interestMode',[['none','No interest'],['included','Interest included in total'],['percentage','Separate percentage interest'],['fixed','Exact fixed interest amount']])}${selectField('Interest frequency','frequency',[['monthly','Monthly'],['weekly','Weekly'],['daily','Daily']])}${field('Interest rate or fixed amount','interestValue','number','0','min="0" step="0.01"')}${selectField('Payment status','status',[['Upcoming','Active / upcoming'],['Paused','Payments paused — interest may continue']])}</div><div class="warning-box">The journey uses the current balance entered here. Future agreement changes will not rewrite earlier history.</div>`}); }
+function debtHistory(id){ const d=state.debts.find(x=>x.id===id),rows=activitiesFor('debt').filter(a=>a.title.includes(d.creditor)); openModal({title:d.creditor,subtitle:`Current balance ${money(d.balance)} · ${interestLabel(d)}`,form:'noop',wide:true,submit:'Close',body:`<div class="metrics">${metric('Current balance',money(d.balance))}${metric('Payment',money(d.payment))}${metric('Next due',shortDate(d.dueDate))}${metric('Status',d.status)}</div><div class="row-actions" style="justify-content:flex-start;margin:0 0 18px"><button type="button" class="button-secondary" data-action="update-debt" data-id="${d.id}">Update agreement</button>${d.balance<=.001?`<button type="button" class="button-ghost" data-action="archive-debt" data-id="${d.id}">Archive paid debt</button>`:''}</div><div class="activity-list">${rows.length?rows.map(activityRow).join(''):'<div class="empty">No account-specific history yet.</div>'}</div>`}); }
+function journeyDetails(){ openModal({title:'Recovery journey details',subtitle:'Starting balances stay fixed; current balances continue to move.',form:'noop',wide:true,submit:'Close',body:`<table class="debt-table"><thead><tr><th>Debt at journey start</th><th class="amount">Starting</th><th class="amount">Current</th><th class="amount">Progress</th></tr></thead><tbody>${state.debts.map(d=>`<tr><td>${d.creditor}</td><td class="amount">${money(d.starting)}</td><td class="amount">${money(d.balance)}</td><td class="amount ${d.balance<=d.starting?'positive':'negative'}">${money(d.starting-d.balance)}</td></tr>`).join('')}</tbody></table>`}); }
+function allocationModal(){ openModal({title:'Manage allocation percentages',subtitle:'Changes apply to future income only. Previous allocations will not be recalculated.',form:'allocations',body:`<div class="form-grid">${state.allocations.map(a=>field(`${a.name} percentage`,a.key,'number',a.percentage,'min="0" max="100" step="0.01" required')).join('')}</div><div class="warning-box">Allocation percentages must total exactly 100%.</div>`}); }
+function costPlanRow(p={}){return `<div class="cost-row" data-cost-row><input type="hidden" data-key="id" value="${h(p.id||'')}"><label>Type<select data-key="type"><option value="bill" ${p.type==='bill'?'selected':''}>Bill</option><option value="budget" ${p.type==='budget'?'selected':''}>Budget</option></select></label><label>Name<input data-key="name" value="${h(p.name||'')}" required></label><label>Monthly plan<input data-key="plan" type="number" min="0.01" step="0.01" value="${h(p.plan||'')}" required></label><label>Due day<input data-key="dueDay" type="number" min="1" max="31" value="${h(p.dueDay||'')}"></label><label>Effective from<input data-key="effectiveFrom" type="date" value="${h(p.effectiveFrom||TODAY)}" required></label><label>Status<select data-key="active"><option value="true" ${p.active!==false?'selected':''}>Active</option><option value="false" ${p.active===false?'selected':''}>Archived</option></select></label></div>`;}
+function costPlanRows(){const plans=state.costPlans?.length?state.costPlans:[...state.bills.map(x=>({...x,type:'bill',active:true,effectiveFrom:TODAY})),...state.budgets.map(x=>({...x,type:'budget',active:true,effectiveFrom:TODAY}))];return plans.length?plans.map(costPlanRow).join(''):costPlanRow();}
+function incomeBreakdown(id){ const i=state.incomes.find(x=>x.id===id); openModal({title:`${i.description} allocation`,subtitle:`${shortDate(i.date)} · ${money(i.amount)}`,form:'noop',submit:'Close',body:`<div class="breakdown-box">${state.allocations.map(a=>`<div class="breakdown-row"><span>${a.name} · ${a.percentage}%</span><b>${money(i.amount*a.percentage/100)}</b></div>`).join('')}<div class="breakdown-row total"><span>Total</span><b>${money(i.amount)}</b></div></div>`}); }
+function allActivity(category=''){ const rows=activitiesFor(category); openModal({title:`${category?labelFor(category)+' ':''}Activity`,subtitle:'Complete chronological history.',form:'noop',wide:true,submit:'Close',body:`<div class="activity-list">${rows.map(activityRow).join('')}</div>`}); }
+
+async function submitForm(form){
+  const data=Object.fromEntries(new FormData(form).entries()), kind=form.dataset.form;
+  if(kind==='noop'){ closeModal(); return; }
+  if(kind==='income'){
+    const amount=Number(data.amount);if(!(amount>=.01))return modalError('Amount must be at least ₱0.01.');
+    return openModal({title:'Review income allocation',subtitle:'Nothing is saved until you confirm this allocation.',form:'income-confirm',submit:'Confirm and record income',body:`<input type="hidden" name="date" value="${h(data.date)}"><input type="hidden" name="source" value="${h(data.source)}"><input type="hidden" name="description" value="${h(data.description)}"><input type="hidden" name="amount" value="${h(data.amount)}"><div class="breakdown-box">${state.allocations.map(a=>`<div class="breakdown-row"><span>${h(a.name)} · ${a.percentage}%</span><b>${money(amount*a.percentage/100)}</b></div>`).join('')}<div class="breakdown-row total"><span>Total</span><b>${money(amount)}</b></div></div>`});
+  }
+  if(kind==='cost-plans')data.rows=[...form.querySelectorAll('[data-cost-row]')].map(row=>Object.fromEntries([...row.querySelectorAll('[data-key]')].map(input=>[input.dataset.key,input.dataset.key==='active'?input.value==='true':input.value])));
+  const persistKind=kind==='income-confirm'?'income':kind;
+  if(window.DRS_API?.live){try{const submit=form.querySelector('[type="submit"]');if(submit)submit.disabled=true;await window.DRS_API.persist(persistKind,data,state.page);await hydrateLive();closeModal();render();notice(successMessage(persistKind));}catch(error){const submit=form.querySelector('[type="submit"]');if(submit)submit.disabled=false;modalError(error.message);}return;}
+  if(kind==='income-confirm'){
+    const amount=Number(data.amount), income={id:uid('i'),date:data.date,source:data.source,description:data.description,amount,allocated:true}; state.incomes.unshift(income); addActivity('income','income',`${data.description} received`,'Allocation breakdown recorded',amount,data.date);
+    state.allocations.forEach(a=>{ const allocated=amount*a.percentage/100; state.funds[a.key]+=allocated; addActivity(a.key,'allocation','Income allocation received',`${data.description} · ${a.percentage}%`,allocated,data.date); });
+    saveState(); closeModal(); render(); incomeBreakdown(income.id); return;
+  }
+  if(kind==='add-funds'){ const amount=Number(data.amount),type=state.page; state.funds[type]+=amount; addActivity(type,'funds',`Direct funds added to ${labelFor(type)}`,`${data.source}${data.note?' · '+data.note:''} · not auto-allocated`,amount,data.date); }
+  if(kind==='expense'){ const amount=Number(data.amount); if(amount>state.funds.living)return modalError(`Only ${money(state.funds.living)} is available in Living Expenses.`); state.funds.living-=amount; const b=state.budgets.find(x=>x.id===data.budgetId); if(b)b.spent+=amount; addActivity('living','expense',`${data.description} expense recorded`,b?'Monthly spending':'Unlisted expense',-amount,data.date); }
+  if(kind==='pay-bill'){ const b=state.bills.find(x=>x.id===data.id),amount=Number(data.amount),outstanding=Math.max(b.actual-Number(b.paid||0),0); if(amount>outstanding)return modalError(`The bill requires ${money(outstanding)}. Change the amount to avoid an excess payment.`); if(amount>state.funds.living)return modalError(`Only ${money(state.funds.living)} is available.`); state.funds.living-=amount;b.paid=Number(b.paid||0)+amount;b.status=b.paid>=b.actual?'Paid':'Partially paid'; addActivity('living','bill',`${b.name} bill paid`,'Bill payment',-amount,data.date); }
+  if(kind==='allocate-goal'){ const type=state.page,g=state.goals[type].find(x=>x.id===data.id),amount=Number(data.amount); if(amount>state.funds[type])return modalError(`Only ${money(state.funds[type])} is available in Power ${labelFor(type)}.`); state.funds[type]-=amount; g.balance+=amount; addActivity(type,'goal',`Added to ${g.name}`,'From available funds',amount,data.date); }
+  if(kind==='use-funds'){ const type=state.page,amount=Number(data.amount); if(data.source==='pool'){ if(amount>state.funds[type])return modalError(`Only ${money(state.funds[type])} is available.`); state.funds[type]-=amount; } else { const g=state.goals[type].find(x=>x.id===data.source); if(amount>g.balance)return modalError(`Only ${money(g.balance)} is available in ${g.name}.`); g.balance-=amount; } addActivity(type,'withdrawal','Funds used',`${data.note} · from ${data.source==='pool'?`Power ${labelFor(type)}`:state.goals[type].find(x=>x.id===data.source).name}`,-amount,data.date); }
+  if(kind==='new-goal'){ state.goals[state.page].push({id:uid('g'),name:data.name,type:data.goalType,target:data.goalType==='continuous'?0:Number(data.target||0),balance:0}); addActivity(state.page,'goal','New goal created',data.name,0,TODAY); }
+  if(kind==='debt-payment'){ const d=state.debts.find(x=>x.id===data.debtId),amount=Number(data.amount); if(amount>d.balance)return modalError(`This payment exceeds the current balance of ${money(d.balance)}. Change the amount before saving.`); if(amount>state.funds.debt)return modalError(`Only ${money(state.funds.debt)} is available in Debt funds.`); d.balance-=amount; state.funds.debt-=amount; addActivity('debt','payment',`Payment made · ${d.creditor}`,data.note||'Interest first, then principal',-amount,data.date); if(d.balance<=.001){d.status='Paid';addActivity('debt','cleared',`Debt cleared · ${d.creditor}`,'Account fully paid',0,data.date);} }
+  if(kind==='add-debt'){ const balance=Number(data.balance),d={id:uid('d'),creditor:data.creditor,balance,starting:state.journey?0:balance,payment:Number(data.payment),dueDate:data.dueDate,status:data.status,interestMode:data.interestMode,interestValue:Number(data.interestValue),interestFrequency:data.frequency,paused:data.status==='Paused',created:TODAY}; state.debts.push(d); if(state.journey){state.recoveryPoints.push({date:TODAY,balance:currentDebt()});state.journey.noNewDebtSince=TODAY;} addActivity('debt','new-debt',`New debt added · ${d.creditor}`,'Recorded current balance',balance,TODAY); }
+  if(kind==='update-debt'){
+    const d=state.debts.find(x=>x.id===data.id),oldBalance=d.balance,newBalance=Number(data.balance),difference=newBalance-oldBalance;
+    d.balance=newBalance; d.payment=Number(data.payment); d.status=data.status; d.paused=data.status==='Paused'; d.interestMode=data.interestMode; d.interestFrequency=data.frequency; d.interestValue=Number(data.interestValue);
+    const type=data.reason==='negotiated'?'negotiated':data.reason==='correction'?'correction':'agreement';
+    const title=data.reason==='negotiated'?`Negotiated balance · ${d.creditor}`:data.reason==='correction'?`Balance correction · ${d.creditor}`:`Agreement updated · ${d.creditor}`;
+    addActivity('debt',type,title,data.reason==='negotiated'?`Formal balance reduction of ${money(Math.max(oldBalance-newBalance,0))}`:'Applied prospectively; earlier history unchanged',difference,data.date);
+    state.recoveryPoints.push({date:data.date,balance:currentDebt()});
+  }
+  if(kind==='transfer'){ const amount=Number(data.amount); if(data.from===data.to)return modalError('Choose two different categories.'); if(amount>state.funds[data.from])return modalError(`Only ${money(state.funds[data.from])} is available in ${labelFor(data.from)}.`); state.funds[data.from]-=amount; state.funds[data.to]+=amount; state.transfers.push({id:uid('t'),date:data.date,from:data.from,to:data.to,amount}); addActivity(data.from,'transfer',`Funds moved to ${labelFor(data.to)}`,`Transfer from ${labelFor(data.from)}`,-amount,data.date); addActivity(data.to,'transfer',`Funds received from ${labelFor(data.from)}`,`Transfer to ${labelFor(data.to)}`,amount,data.date); }
+  if(kind==='allocations'){ const vals=state.allocations.map(a=>Number(data[a.key])),total=vals.reduce((a,b)=>a+b,0); if(Math.abs(total-100)>.001)return modalError(`Percentages currently total ${total}%. They must total exactly 100%.`); state.allocations.forEach((a,i)=>a.percentage=vals[i]); }
+  if(kind==='expected-income'){ state.expected.push({id:uid('e'),date:data.date,name:data.name,source:data.source,amount:Number(data.amount),status:'Expected'}); }
+  if(kind==='expected-income-update'){const item=state.expected.find(x=>x.id===data.id);if(item)Object.assign(item,{date:data.date,name:data.name,source:data.source,amount:Number(data.amount)});}
+  if(kind==='expected-income-cancel'){const item=state.expected.find(x=>x.id===data.id);if(item)item.status='Cancelled';}
+  if(kind==='receive-expected'){const item=state.expected.find(x=>x.id===data.id),amount=Number(data.amount);item.status='Received';item.amount=amount;state.incomes.unshift({id:uid('i'),date:data.date,source:item.source,description:item.name,amount,allocated:true});state.allocations.forEach(a=>{const allocated=amount*a.percentage/100;state.funds[a.key]+=allocated;addActivity(a.key,'allocation','Income allocation received',`${item.name} · ${a.percentage}%`,allocated,data.date);});addActivity('income','income',`${item.name} received`,'Expected income finalized and allocated',amount,data.date);}
+  if(kind==='bill-plan'){
+    const existing=state.bills.find(b=>b.name.toLowerCase()===data.name.toLowerCase());
+    if(existing)Object.assign(existing,{plan:Number(data.plan),actual:Number(data.actual),dueDay:Number(data.dueDay),status:Number(data.actual)>Number(data.plan)?'Needs review':'Upcoming'});
+    else state.bills.push({id:uid('b'),name:data.name,plan:Number(data.plan),actual:Number(data.actual),dueDay:Number(data.dueDay),status:Number(data.actual)>Number(data.plan)?'Needs review':'Upcoming'});
+  }
+  if(kind==='budget-plan'){
+    const existing=state.budgets.find(b=>b.name.toLowerCase()===data.name.toLowerCase());
+    if(existing)existing.plan=Number(data.plan); else state.budgets.push({id:uid('m'),name:data.name,plan:Number(data.plan),spent:0});
+  }
+  if(kind==='recovery-goal'){ state.journey.targetBalance=Number(data.targetBalance); state.journey.targetDate=data.targetDate; }
+  if(kind==='cost-plans'){state.costPlans=data.rows.map((x,i)=>({...x,id:x.id||uid('p'),plan:Number(x.plan),dueDay:x.type==='bill'?Number(x.dueDay):'',active:Boolean(x.active)}));state.bills=state.costPlans.filter(x=>x.type==='bill'&&x.active).map(p=>({...p,actual:state.bills.find(b=>b.id===p.id)?.actual||0,paid:state.bills.find(b=>b.id===p.id)?.paid||0,status:state.bills.find(b=>b.id===p.id)?.status||'Not recorded'}));state.budgets=state.costPlans.filter(x=>x.type==='budget'&&x.active).map(p=>({...p,spent:state.budgets.find(b=>b.id===p.id)?.spent||0}));}
+  if(kind==='record-current-bill'){const b=state.bills.find(x=>x.id===data.planId);if(b)Object.assign(b,{billingMonth:data.billingMonth,dueOn:data.dueOn,actual:Number(data.actual),paid:0,status:Number(data.actual)>b.plan?'Needs review':'Upcoming'});}
+  if(kind==='start-journey'){state.journey={startDate:data.date,startingDebt:currentDebt(),targetBalance:Number(data.targetBalance),targetDate:data.targetDate||'',noNewDebtSince:data.date};state.debts.forEach(d=>d.starting=d.balance);}
+  saveState(); closeModal(); render(); notice(successMessage(kind));
+}
+function successMessage(kind){return ({income:'Income recorded and allocated.','expected-income':'Expected income plan saved. No funds were added.','expected-income-update':'Expected income plan updated. No funds were added.','expected-income-cancel':'Expected income plan cancelled. No funds were changed.','cost-plans':'Cost of Living plans saved for their effective dates.','record-current-bill':'Current bill recorded. No payment was made.','new-goal':'Goal created. No funds were moved.','allocations':'Allocation percentages saved for future income.','recovery-goal':'Recovery goal updated.','start-journey':'Recovery journey started. Starting debt is now fixed.'})[kind]||'Saved. The activity and balances were updated.';}
+
+document.addEventListener('click',event=>{
+  const page=event.target.closest('[data-page]')?.dataset.page; if(page)return go(page);
+  const target=event.target.closest('[data-action]'); if(!target)return;
+  const action=target.dataset.action,id=target.dataset.id||target.dataset.category||'';
+  if(action==='close-modal')return closeModal();
+  if(action==='add-cost-row'){document.querySelector('#costRows')?.insertAdjacentHTML('beforeend',costPlanRow());return;}
+  if(action==='delete-account'){if(!window.DRS_API?.live)return notice('Account deletion is disabled in the local visual-review build.',true);return openModal({title:'Delete account and financial data',subtitle:'This removes live financial and profile data. Required payment and operational records follow the disclosed retention rules.',form:'delete-account',submit:'Delete account',body:`<div class="warning-box">Temporary backup copies may remain until backup expiry, normally within 30 days.</div><div class="form-grid">${field('Type DELETE to confirm','confirmation','text','','required pattern="DELETE"','full')}</div>`});}
+  actionModal(action,id);
+});
+document.addEventListener('submit',async event=>{
+  if(event.target.id==='modalForm'){event.preventDefault();event.stopPropagation();return submitForm(event.target);}
+  if(event.target.id==='moveForm'){
+    event.preventDefault();clearNotice();const data=Object.fromEntries(new FormData(event.target));
+    if(data.from===data.to)return notice('Choose a different destination category.',true);
+    const amount=Number(data.amount);if(!(amount>0)||amount>state.funds[data.from])return notice(`Only ${money(state.funds[data.from])} is available in ${labelFor(data.from)}.`,true);
+    try{if(window.DRS_API?.live){await window.DRS_API.persist('transfer',data,'actions');await hydrateLive();}else{state.funds[data.from]-=amount;state.funds[data.to]+=amount;state.transfers.push({id:uid('t'),date:data.date,from:data.from,to:data.to,amount});saveState();}render();notice('Money moved between categories. Total funds did not change.');}catch(error){notice(error.message,true);}return;
+  }
+},true);
+document.addEventListener('input',event=>{const form=event.target.closest('#moveForm');if(!form)return;const data=Object.fromEntries(new FormData(form)),amount=Number(data.amount||0),box=form.querySelector('.transfer-preview');if(!box)return;if(!amount){box.textContent='Enter an amount to preview the balances after this move.';return;}const before=Number(state.funds[data.from]||0),after=before-amount,destination=Number(state.funds[data.to]||0)+amount;box.innerHTML=`<b>${h(labelFor(data.from))}</b>: ${money(before)} → <b class="${after<0?'negative':''}">${money(after)}</b><br><b>${h(labelFor(data.to))}</b>: ${money(state.funds[data.to]||0)} → <b>${money(destination)}</b>${after<0?'<br><span class="negative">This would leave the source category below zero.</span>':''}`;});
+$('#menuButton').addEventListener('click',()=>$('#sidebar').classList.toggle('open'));
+document.addEventListener('keydown',event=>{if(event.key==='Escape')return closeModal();if(event.key==='Tab'&&$('#modalRoot').innerHTML){const items=[...$('#modalRoot').querySelectorAll('button,input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter(x=>!x.disabled),first=items[0],last=items.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}});
+async function hydrateLive(){const patch=await window.DRS_API?.bootstrap();if(patch){Object.keys(patch).forEach(key=>{if(patch[key]!==undefined)state[key]=patch[key];});}}
+if(window.DRS_API?.live){header('Loading your workspace','Confirming your session and current balances.');app.innerHTML='<div class="loading-grid"><div class="loading-card"></div><div class="loading-card"></div><div class="loading-card wide"></div></div>';renderNav();hydrateLive().then(()=>{if(state.userRole==='admin'){location.replace('admin.html');return;}render();}).catch(error=>{if(error.message!=='Please sign in.')notice(error.message,true);});}else render();
+window.addEventListener('drs-authenticated',()=>{clearNotice();hydrateLive().then(()=>{clearNotice();render();}).catch(error=>notice(error.message,true));});

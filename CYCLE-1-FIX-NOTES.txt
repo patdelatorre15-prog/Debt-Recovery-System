@@ -1,0 +1,40 @@
+DRS Cycle 1 correction package
+Date: 2026-09-02
+
+Complete replacement files included:
+- script.js
+- api-client.js
+- admin.js
+- styles.css
+- worker/src/index.js
+
+Key corrections in this package:
+- Removes hard-coded demo financial state from the production loading path.
+- Uses a loading skeleton until the authenticated workspace is resolved.
+- Moves allocation management to Income and adds the Dashboard forecast.
+- Uses actual monthly allocation and ledger activity for summaries.
+- Corrects debt-payment, bill-payment, goal, transfer, and direct-fund activity mapping.
+- Restores central transfer history from paired ledger entries.
+- Corrects the persisted Savings/Fun goal balance sign.
+- Prevents modal forms from falling through to native GET submission.
+- Replaces raw internal validation codes with user-facing messages.
+- Adds explicit Recovery Journey Start and fixed starting-debt snapshots.
+- Includes current bill instances in account export.
+- Redirects non-Admin users away from the Admin interface.
+- Improves forecast, loading, tablet, and mobile presentation rules.
+
+Verification:
+- JavaScript syntax checks passed.
+- Automated test suite: 21 passed, 0 failed.
+
+Deployment order:
+1. Replace the four frontend files at repository root.
+2. Replace worker/src/index.js.
+3. Deploy the Worker.
+4. Deploy or allow GitHub-connected Pages to redeploy.
+5. Run focused Cycle 1 regression using the protected test user.
+
+Data safety:
+- This package contains no reset, migration, or deletion command.
+- Do not reset D1 or delete projectbayadutang@gmail.com test data.
+- Testing Complete and Launch Approval remain separate owner decisions.

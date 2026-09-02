@@ -133,7 +133,18 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
 .attention-item { display: grid; grid-template-columns: 112px 1fr auto; gap: 14px; align-items: center; min-height: 70px; border-bottom: 1px solid #efd3cc; }
 .attention-code { color: var(--coral); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
 .attention-item .amount { color: var(--coral); }
+.attention-item { width:100%; border-top:0; border-right:0; border-left:0; text-align:left; background:transparent; color:inherit; }
 .attention-separator { border-left: 1px solid #efd3cc; padding-left: 28px; }
+.attention-detail-list { border-top:1px solid #efd3cc; }
+.attention-detail { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:18px; align-items:center; padding:16px 0; border-bottom:1px solid #efd3cc; }
+.cost-table { display:grid; gap:10px; margin-bottom:14px; }
+.cost-row { display:grid; grid-template-columns:100px minmax(150px,1.3fr) 130px 90px 150px 110px; gap:10px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--paper-soft); }
+.cost-row label { display:grid; gap:5px; color:var(--muted); font-size:11px; font-weight:700; }
+.cost-row input,.cost-row select { width:100%; min-width:0; padding:9px; border:1px solid #cfd8cf; border-radius:8px; background:white; }
+.transfer-preview { padding:13px; border-radius:11px; background:var(--sage-2); color:var(--muted); line-height:1.55; }
+.account-actions { justify-content:flex-start; margin-top:18px; }
+.activity-icon.warn { color:#8a6429; background:#f6edd9; }
+.admin-pending .admin-shell { visibility:hidden; }
 
 .allocation-row { margin-bottom: 14px; }
 .forecast-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; }
@@ -211,6 +222,7 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
 .breakdown-box .breakdown-row { padding: 8px 0; }
 
 @media (max-width: 1120px) {
+  .cost-row { grid-template-columns:repeat(3,minmax(0,1fr)); }
   .forecast-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
   .metrics, .metrics.five { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .split-wide { grid-template-columns: 1fr; }
@@ -237,6 +249,11 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
   .page-actions > button { flex: 1; }
   .grid-2, .grid-3, .attention-grid, .wins-grid { grid-template-columns: 1fr; }
   .attention-separator { border-left: 0; padding-left: 0; }
+  .attention-item { grid-template-columns:1fr auto; padding:14px 0; }
+  .attention-item .attention-code { grid-column:1/-1; }
+  .attention-detail { grid-template-columns:1fr; }
+  .attention-detail .amount { text-align:left; }
+  .cost-row { grid-template-columns:1fr; }
   .activity-row { grid-template-columns: 65px 32px 1fr auto; }
   .activity-tag { display: none; }
   .list-row, .list-row.compact { grid-template-columns: 60px 1fr auto; }
@@ -252,6 +269,14 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
   .recovery-stat { padding: 12px 0; border-right: 0; border-bottom: 1px solid var(--line); }
   .form-grid { grid-template-columns: 1fr; }
   .field.full { grid-column: auto; }
+}
+
+@media (max-width: 900px) {
+  .admin-shell .table-wrap table,.admin-shell .table-wrap tbody,.admin-shell .table-wrap tr,.admin-shell .table-wrap td { display:block; width:100%; }
+  .admin-shell .table-wrap thead { display:none; }
+  .admin-shell .table-wrap tr { padding:12px 0; border-bottom:1px solid var(--line); }
+  .admin-shell .table-wrap td { padding:6px 0; border:0; }
+  .admin-shell .table-wrap select { width:100%; margin-bottom:8px; }
 }
 
 /* Keep Living Expenses row controls inside each half-width desktop card. */
