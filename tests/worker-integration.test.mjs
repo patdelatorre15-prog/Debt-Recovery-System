@@ -24,6 +24,7 @@ function setup(){
   const DB=new D1TestDatabase();
   DB.exec(readFileSync(new URL('../worker/migrations/0001_initial.sql',import.meta.url),'utf8'));
   DB.exec(readFileSync(new URL('../worker/migrations/0002_operations.sql',import.meta.url),'utf8'));
+  DB.exec(readFileSync(new URL('../worker/migrations/0003_cycle1_fixes.sql',import.meta.url),'utf8'));
   const env={DB,ALLOWED_ORIGINS:'https://review.example',GOOGLE_CLIENT_ID:'google-client',PAYMENT_PROVIDER_MODE:'disabled',EMAIL_PROVIDER_MODE:'development',BREVO_SENDER_EMAIL:'tiny.tools.studio.ph@gmail.com'};
   return {DB,env};
 }
@@ -62,6 +63,18 @@ test('Debt safeguards, account history and recovery calculations execute against
   result=await call(env,`/api/debts/${debtId}/history`);assert.equal(result.response.status,200);assert.equal(result.data.activity.some(x=>x.entry_type==='debt_payment'),true);
   result=await call(env,'/api/recovery');assert.equal(result.response.status,200);assert.equal(result.data.currentDebtMinor,40000);
   result=await call(env,'/api/debts/archive',{method:'POST',body:{debtId}});assert.equal(result.response.status,409);assert.equal(result.data.error,'only_fully_paid_debt_can_be_archived');
+});
+
+test('Cycle 1 plan editing, bulk Cost of Living, and explicit Recovery start persist correctly',async()=>{
+  const {DB,env}=setup();await seedUser(DB);
+  let result=await call(env,'/api/expected-income',{method:'POST',body:{expectedOn:today,name:'Salary',source:'Salary',amount:2000}});assert.equal(result.response.status,201);const expectedId=result.data.id;
+  result=await call(env,'/api/expected-income/update',{method:'POST',body:{id:expectedId,expectedOn:'2026-09-02',name:'Updated salary',source:'Salary',amount:2100}});assert.equal(result.response.status,200);
+  result=await call(env,'/api/expected-income/cancel',{method:'POST',body:{id:expectedId}});assert.equal(result.data.status,'cancelled');
+  result=await call(env,'/api/living-plans/bulk',{method:'POST',body:{rows:[{name:'Electricity',type:'bill',plan:500,dueDay:5,effectiveFrom:today,active:true},{name:'Groceries',type:'budget',plan:900,effectiveFrom:today,active:true}]}});assert.equal(result.response.status,201);assert.equal(result.data.saved,2);
+  result=await call(env,'/api/debts',{method:'POST',body:{creditor:'Journey debt',currentBalance:1000,dueDate:today,paymentAmount:100,interestMode:'none',interestFrequency:'monthly'}});assert.equal(result.response.status,201);
+  result=await call(env,'/api/recovery/start',{method:'POST',body:{date:today,targetBalance:0,targetDate:'2027-09-01'}});assert.equal(result.response.status,201);assert.equal(result.data.startingDebtMinor,100000);
+  assert.equal(DB.prepare("SELECT journey_start_balance_minor FROM debts WHERE id=?").bind(result.data.debtId||'missing').first(),null);
+  assert.equal(DB.prepare("SELECT starting_debt_minor FROM recovery_journeys WHERE user_id='u1'").first().starting_debt_minor,100000);
 });
 
 test('Payhip webhook verification, mapping, idempotency and entitlement activation execute end to end',async()=>{

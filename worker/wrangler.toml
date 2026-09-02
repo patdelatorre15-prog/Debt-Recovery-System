@@ -4,8 +4,8 @@ compatibility_date = "2026-08-01"
 
 [vars]
 APP_ENV = "development"
-ALLOWED_ORIGINS = "https://debt-recoverysystem.pages.dev"
-GOOGLE_CLIENT_ID = "363814214273-68nu1e49dgqnkv4vjp4q3go8t2hhk4ga.apps.googleusercontent.com"
+ALLOWED_ORIGINS = "http://localhost:8788,http://localhost:4173"
+GOOGLE_CLIENT_ID = "CONFIGURE_IN_CLOUDFLARE"
 PAYMENT_PROVIDER_MODE = "disabled"
 PAYPAL_ENVIRONMENT = "sandbox"
 EMAIL_PROVIDER_MODE = "development"
@@ -15,7 +15,7 @@ BREVO_SENDER_NAME = "Tiny Tools Studio"
 [[d1_databases]]
 binding = "DB"
 database_name = "debt-recovery-system-development"
-database_id = "720ddbef-1c0b-4236-90c1-b3fb8276e1fc"
+database_id = "CONFIGURE_AFTER_D1_CREATION"
 migrations_dir = "migrations"
 
 [triggers]

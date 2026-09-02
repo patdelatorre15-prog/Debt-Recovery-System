@@ -32,3 +32,18 @@ test('responsive and accessibility foundations are present',()=>{
   assert.match(script,/role="dialog" aria-modal="true"/);
   assert.match(script,/event\.key==='Escape'/);
 });
+
+test('Cycle 1 workflows are present without legacy demo fallbacks',()=>{
+  const script=readFileSync(new URL('../script.js',import.meta.url),'utf8'),api=readFileSync(new URL('../api-client.js',import.meta.url),'utf8'),admin=readFileSync(new URL('../admin.html',import.meta.url),'utf8');
+  assert.match(script,/Review income allocation/);
+  assert.match(script,/Manage Cost of Living/);
+  assert.match(script,/Record current bill/);
+  assert.match(script,/function attentionItems\(\)/);
+  assert.match(script,/id="moveForm"/);
+  assert.match(script,/data-action="logout"/);
+  assert.doesNotMatch(script,/Credit Card A/);
+  assert.doesNotMatch(script,/62513\.8/);
+  assert.match(api,/expected-income\/update/);
+  assert.match(api,/living-plans\/bulk/);
+  assert.match(admin,/class="admin-pending"/);
+});

@@ -23,6 +23,8 @@ export default {
       if (route === 'GET /api/activity') return cors(await listActivity(request,env,user),request,env);
       if (route === 'GET /api/expected-income') return cors(await listExpectedIncome(env,user),request,env);
       if (route === 'POST /api/expected-income') return cors(await saveExpectedIncome(request,env,user),request,env);
+      if (route === 'POST /api/expected-income/update') return cors(await updateExpectedIncome(request,env,user),request,env);
+      if (route === 'POST /api/expected-income/cancel') return cors(await cancelExpectedIncome(request,env,user),request,env);
       if (route === 'POST /api/expected-income/receive') return cors(await receiveExpectedIncome(request,env,user),request,env);
       if (route === 'POST /api/income') return cors(await recordIncome(request,env,user),request,env);
       if (route === 'POST /api/funds/direct') return cors(await directFunds(request,env,user),request,env);
@@ -34,6 +36,7 @@ export default {
       if (route === 'POST /api/goals/use') return cors(await useGoalFunds(request,env,user),request,env);
       if (route === 'GET /api/living-plans') return cors(await listLivingPlans(env,user),request,env);
       if (route === 'POST /api/living-plans') return cors(await saveLivingPlan(request,env,user),request,env);
+      if (route === 'POST /api/living-plans/bulk') return cors(await saveLivingPlansBulk(request,env,user),request,env);
       if (route === 'POST /api/living-bills') return cors(await saveLivingBill(request,env,user),request,env);
       if (route === 'POST /api/expenses') return cors(await recordExpense(request,env,user),request,env);
       if (route === 'GET /api/debts') return cors(await listDebts(env,user),request,env);
@@ -141,6 +144,19 @@ async function saveExpectedIncome(request,env,user){
   if(!name||!source||amount<=0||!expected)return reply({error:'invalid_expected_income'},400);const id=crypto.randomUUID();
   await env.DB.prepare(`INSERT INTO expected_income(id,user_id,expected_on,name,source,amount_minor,status,created_at,updated_at) VALUES(?,?,?,?,?,?,'expected',?,?)`).bind(id,user.id,expected,name,source,amount,now,now).run();return reply({id,status:'expected'},201);
 }
+async function updateExpectedIncome(request,env,user){
+  const b=await readJson(request),id=String(b.id||''),name=clean(b.name,120),source=clean(b.source,80),amount=moneyMinor(b.amount),expected=validDate(b.expectedOn),now=new Date().toISOString();
+  if(!id||!name||!source||amount<=0||!expected)return reply({error:'invalid_expected_income'},400);
+  const result=await env.DB.prepare(`UPDATE expected_income SET expected_on=?,name=?,source=?,amount_minor=?,updated_at=? WHERE id=? AND user_id=? AND status='expected'`).bind(expected,name,source,amount,now,id,user.id).run();
+  if(!result.meta?.changes)return reply({error:'expected_income_not_available'},409);
+  return reply({id,status:'expected',expectedOn:expected},200);
+}
+async function cancelExpectedIncome(request,env,user){
+  const b=await readJson(request),id=String(b.id||''),now=new Date().toISOString();
+  const result=await env.DB.prepare(`UPDATE expected_income SET status='cancelled',updated_at=? WHERE id=? AND user_id=? AND status='expected'`).bind(now,id,user.id).run();
+  if(!result.meta?.changes)return reply({error:'expected_income_not_available'},409);
+  return reply({id,status:'cancelled'},200);
+}
 async function receiveExpectedIncome(request,env,user){
   const b=await readJson(request),item=await env.DB.prepare(`SELECT * FROM expected_income WHERE id=? AND user_id=? AND status='expected'`).bind(String(b.expectedIncomeId||''),user.id).first(),occurred=validDate(b.date);
   if(!item||!occurred)return reply({error:'expected_income_not_available'},409);const actual=b.amount==null||b.amount===''?Number(item.amount_minor):moneyMinor(b.amount);if(actual<=0)return reply({error:'invalid_income'},400);const income=await createAllocatedIncome(env,user,{amount:actual,occurred,description:item.name,source:item.source,key:idempotency(request)}),now=new Date().toISOString();
@@ -234,11 +250,20 @@ async function useGoalFunds(request,env,user){
 async function ownedGoal(env,user,id){return env.DB.prepare(`SELECT * FROM goals WHERE id=? AND user_id=? AND status='active'`).bind(String(id||''),user.id).first();}
 async function goalBalance(env,user,id){const row=await env.DB.prepare(`SELECT COALESCE(-SUM(amount_minor),0) balance FROM ledger_entries WHERE user_id=? AND related_type='goal' AND related_id=? AND entry_type IN ('goal_allocation','goal_use')`).bind(user.id,id).first();return Number(row.balance||0);}
 
-async function listLivingPlans(env,user){return reply({items:(await env.DB.prepare(`SELECT p.*,b.id bill_instance_id,b.billing_month,b.due_on,b.actual_amount_minor,b.paid_amount_minor,b.status bill_status FROM living_plans p LEFT JOIN living_bill_instances b ON b.id=(SELECT id FROM living_bill_instances WHERE plan_id=p.id ORDER BY billing_month DESC LIMIT 1) WHERE p.user_id=? AND p.active=1 ORDER BY p.plan_type,p.name`).bind(user.id).all()).results});}
+async function listLivingPlans(env,user){return reply({items:(await env.DB.prepare(`SELECT p.*,b.id bill_instance_id,b.billing_month,b.due_on,b.actual_amount_minor,b.paid_amount_minor,b.status bill_status FROM living_plans p LEFT JOIN living_bill_instances b ON b.id=(SELECT id FROM living_bill_instances WHERE plan_id=p.id ORDER BY billing_month DESC LIMIT 1) WHERE p.user_id=? ORDER BY p.active DESC,p.plan_type,p.name`).bind(user.id).all()).results});}
 async function saveLivingPlan(request,env,user){
-  const b=await readJson(request),name=clean(b.name,120),type=['bill','budget'].includes(b.planType)?b.planType:null,amount=moneyMinor(b.plannedAmount),due=b.dueDay==null||b.dueDay===''?null:Number(b.dueDay),now=new Date().toISOString();
+  const b=await readJson(request),name=clean(b.name,120),type=['bill','budget'].includes(b.planType)?b.planType:null,amount=moneyMinor(b.plannedAmount),due=b.dueDay==null||b.dueDay===''?null:Number(b.dueDay),effective=validDate(b.effectiveFrom)||dateOnly(new Date()),active=b.active===false||b.active===0?0:1,now=new Date().toISOString();
   if(!name||!type||amount<0||(type==='bill'&&(!Number.isInteger(due)||due<1||due>31)))return reply({error:'invalid_living_plan'},400);const id=String(b.id||crypto.randomUUID());
-  await env.DB.prepare(`INSERT INTO living_plans(id,user_id,name,plan_type,planned_amount_minor,due_day,active,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?) ON CONFLICT(user_id,name) DO UPDATE SET plan_type=excluded.plan_type,planned_amount_minor=excluded.planned_amount_minor,due_day=excluded.due_day,active=1,updated_at=excluded.updated_at`).bind(id,user.id,name,type,amount,type==='bill'?due:null,now,now).run();const saved=await env.DB.prepare(`SELECT id FROM living_plans WHERE user_id=? AND lower(name)=lower(?)`).bind(user.id,name).first();return reply({id:saved.id,name,planType:type,plannedAmountMinor:amount,dueDay:type==='bill'?due:null},201);
+  await env.DB.prepare(`INSERT INTO living_plans(id,user_id,name,plan_type,planned_amount_minor,due_day,active,effective_from,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,name) DO UPDATE SET plan_type=excluded.plan_type,planned_amount_minor=excluded.planned_amount_minor,due_day=excluded.due_day,active=excluded.active,effective_from=excluded.effective_from,updated_at=excluded.updated_at`).bind(id,user.id,name,type,amount,type==='bill'?due:null,active,effective,now,now).run();const saved=await env.DB.prepare(`SELECT id FROM living_plans WHERE user_id=? AND lower(name)=lower(?)`).bind(user.id,name).first();return reply({id:saved.id,name,planType:type,plannedAmountMinor:amount,dueDay:type==='bill'?due:null,effectiveFrom:effective,active:Boolean(active)},201);
+}
+async function saveLivingPlansBulk(request,env,user){
+  const b=await readJson(request),rows=Array.isArray(b.rows)?b.rows:[];
+  if(!rows.length||rows.length>100)return reply({error:'invalid_living_plan_table'},400);
+  const normalized=[];
+  for(const row of rows){const name=clean(row.name,120),rawType=row.planType??row.type,type=['bill','budget'].includes(rawType)?rawType:null,amount=moneyMinor(row.plannedAmount??row.plan),due=row.dueDay===''||row.dueDay==null?null:Number(row.dueDay),effective=validDate(row.effectiveFrom),active=row.active!==false&&row.active!==0;if(!name||!type||amount<=0||!effective||(type==='bill'&&(!Number.isInteger(due)||due<1||due>31)))return reply({error:'invalid_living_plan_table'},400);normalized.push({id:String(row.id||crypto.randomUUID()),name,type,amount,due,effective,active});}
+  const names=new Set(normalized.map(x=>x.name.toLowerCase()));if(names.size!==normalized.length)return reply({error:'duplicate_living_plan_name'},400);
+  const now=new Date().toISOString(),statements=normalized.map(x=>env.DB.prepare(`INSERT INTO living_plans(id,user_id,name,plan_type,planned_amount_minor,due_day,active,effective_from,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,name) DO UPDATE SET plan_type=excluded.plan_type,planned_amount_minor=excluded.planned_amount_minor,due_day=excluded.due_day,active=excluded.active,effective_from=excluded.effective_from,updated_at=excluded.updated_at`).bind(x.id,user.id,x.name,x.type,x.amount,x.type==='bill'?x.due:null,x.active?1:0,x.effective,now,now));
+  await env.DB.batch(statements);return reply({saved:normalized.length},201);
 }
 async function saveLivingBill(request,env,user){
   const b=await readJson(request),plan=await env.DB.prepare(`SELECT * FROM living_plans WHERE id=? AND user_id=? AND plan_type='bill' AND active=1`).bind(String(b.planId||''),user.id).first(),month=/^\d{4}-\d{2}$/.test(String(b.billingMonth||''))?String(b.billingMonth):null,actual=moneyMinor(b.actualAmount),due=validDate(b.dueOn),now=new Date().toISOString();if(!plan||!month||actual<0||!due||!due.startsWith(month))return reply({error:'invalid_living_bill'},400);const id=crypto.randomUUID();
@@ -272,13 +297,14 @@ async function createDebt(request,env,user){
   const b=await readJson(request),balance=moneyMinor(b.currentBalance),payment=moneyMinor(b.paymentAmount),due=validDate(b.dueDate),creditor=clean(b.creditor,120),mode=interestMode(b.interestMode),frequency=interestFrequency(b.interestFrequency),now=new Date().toISOString();
   if(!creditor||balance<=0||payment<0||!due||!mode||!frequency)return reply({error:'invalid_debt'},400);
   let c=await env.DB.prepare('SELECT id FROM creditors WHERE user_id=? AND lower(name)=lower(?)').bind(user.id,creditor).first();
+  const journey=await env.DB.prepare(`SELECT started_on FROM recovery_journeys WHERE user_id=?`).bind(user.id).first();
   const creditorId=c?.id||crypto.randomUUID(),debtId=crypto.randomUUID();
   const statements=[];
   if(!c)statements.push(env.DB.prepare('INSERT INTO creditors(id,user_id,name,active,created_at,updated_at) VALUES(?,?,?,?,?,?)').bind(creditorId,user.id,creditor,1,now,now));
   else statements.push(env.DB.prepare('UPDATE creditors SET active=1,updated_at=? WHERE id=? AND user_id=?').bind(now,creditorId,user.id));
-  statements.push(env.DB.prepare(`INSERT INTO debts(id,user_id,creditor_id,journey_start_balance_minor,current_balance_minor,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`).bind(debtId,user.id,creditorId,balance,balance,b.paused?'paused':'active',now,now));
+  statements.push(env.DB.prepare(`INSERT INTO debts(id,user_id,creditor_id,journey_start_balance_minor,current_balance_minor,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`).bind(debtId,user.id,creditorId,journey?0:balance,balance,b.paused?'paused':'active',now,now));
   statements.push(env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,payment_frequency,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),debtId,due,payment,due,clean(b.paymentFrequency,20)||'monthly',mode,Number(b.interestValue||0),frequency,clean(b.interestBasis,20)||'remaining',b.paused?1:0,'created',clean(b.notes,1000),now));
-  statements.push(env.DB.prepare(`UPDATE recovery_journeys SET no_new_debt_since=?,updated_at=? WHERE user_id=?`).bind(dateOnly(new Date()),now,user.id));
+  if(journey)statements.push(env.DB.prepare(`UPDATE recovery_journeys SET no_new_debt_since=?,updated_at=? WHERE user_id=?`).bind(dateOnly(new Date()),now,user.id));
   statements.push(ledger(env,{id:crypto.randomUUID(),user,occurred:dateOnly(new Date()),type:'new_debt',category:'debt_adjustment',amount:balance,relatedType:'debt',relatedId:debtId,description:`New debt · ${creditor}`,key:idempotency(request),now}));
   await env.DB.batch(statements); return reply({id:debtId,currentBalanceMinor:balance},201);
 }
@@ -338,30 +364,32 @@ async function recoverySummary(env,user){
 async function saveRecoveryGoal(request,env,user){
   const b=await readJson(request),target=moneyMinor(b.targetBalance||0),targetDate=b.targetDate?validDate(b.targetDate):null,now=new Date().toISOString(),balance=await env.DB.prepare(`SELECT COALESCE(SUM(current_balance_minor),0) total FROM debts WHERE user_id=? AND status IN ('active','paused','paid')`).bind(user.id).first(),existing=await env.DB.prepare(`SELECT user_id FROM recovery_journeys WHERE user_id=?`).bind(user.id).first();
   if(target<0||(b.targetDate&&!targetDate))return reply({error:'invalid_recovery_goal'},400);
-  if(existing)await env.DB.prepare(`UPDATE recovery_journeys SET target_balance_minor=?,target_date=?,updated_at=? WHERE user_id=?`).bind(target,targetDate,now,user.id).run();
-  else await env.DB.prepare(`INSERT INTO recovery_journeys(user_id,started_on,starting_debt_minor,target_balance_minor,target_date,no_new_debt_since,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`).bind(user.id,dateOnly(new Date()),Number(balance.total||0),target,targetDate,dateOnly(new Date()),now,now).run();
+  if(!existing)return reply({error:'recovery_journey_not_started'},409);
+  await env.DB.prepare(`UPDATE recovery_journeys SET target_balance_minor=?,target_date=?,updated_at=? WHERE user_id=?`).bind(target,targetDate,now,user.id).run();
   return reply({targetBalanceMinor:target,targetDate});
 }
 
 async function startRecoveryJourney(request,env,user){
   const existing=await env.DB.prepare(`SELECT user_id FROM recovery_journeys WHERE user_id=?`).bind(user.id).first();
   if(existing)return reply({error:'recovery_journey_already_started'},409);
-  const b=await readJson(request),started=validDate(b.date)||dateOnly(new Date()),now=new Date().toISOString();
+  const b=await readJson(request),started=validDate(b.date)||dateOnly(new Date()),target=moneyMinor(b.targetBalance||0),targetDate=b.targetDate?validDate(b.targetDate):null,now=new Date().toISOString();
+  if(target<0||(b.targetDate&&!targetDate))return reply({error:'invalid_recovery_goal'},400);
   const debts=await env.DB.prepare(`SELECT id,current_balance_minor FROM debts WHERE user_id=? AND status IN ('active','paused')`).bind(user.id).all();
   const starting=debts.results.reduce((sum,d)=>sum+Number(d.current_balance_minor),0);
   if(starting<=0)return reply({error:'active_debt_required'},409);
-  const statements=[env.DB.prepare(`INSERT INTO recovery_journeys(user_id,started_on,starting_debt_minor,target_balance_minor,target_date,no_new_debt_since,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`).bind(user.id,started,starting,0,null,started,now,now)];
+  const statements=[env.DB.prepare(`INSERT INTO recovery_journeys(user_id,started_on,starting_debt_minor,target_balance_minor,target_date,no_new_debt_since,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`).bind(user.id,started,starting,target,targetDate,started,now,now)];
   debts.results.forEach(d=>statements.push(env.DB.prepare(`UPDATE debts SET journey_start_balance_minor=?,updated_at=? WHERE id=? AND user_id=?`).bind(d.current_balance_minor,now,d.id,user.id)));
-  await env.DB.batch(statements);return reply({startedOn:started,startingDebtMinor:starting},201);
+  await env.DB.batch(statements);return reply({startedOn:started,startingDebtMinor:starting,targetBalanceMinor:target,targetDate},201);
 }
 
 async function exportAccount(env,user){
   const tables=['allocation_rules','ledger_entries','expected_income','living_plans','living_bill_instances','goals','creditors','debts','recovery_journeys','recovery_snapshots'];
-  const data={exportedAt:new Date().toISOString(),profile:safeUser(user)};
-  for(const table of tables)data[table]=(await env.DB.prepare(`SELECT * FROM ${table} WHERE user_id=?`).bind(user.id).all()).results;
+  const data={exportedAt:new Date().toISOString(),profile:{email:user.email,name:user.name,status:user.status}};
+  const cleanRow=row=>{const copy={...row};delete copy.user_id;delete copy.idempotency_key;delete copy.google_sub;return copy;};
+  for(const table of tables)data[table]=(await env.DB.prepare(`SELECT * FROM ${table} WHERE user_id=?`).bind(user.id).all()).results.map(cleanRow);
   const debtIds=data.debts.map(x=>x.id);
   data.debt_agreement_versions=[];
-  for(const id of debtIds)data.debt_agreement_versions.push(...(await env.DB.prepare(`SELECT * FROM debt_agreement_versions WHERE debt_id=? ORDER BY effective_on`).bind(id).all()).results);
+  for(const id of debtIds)data.debt_agreement_versions.push(...(await env.DB.prepare(`SELECT * FROM debt_agreement_versions WHERE debt_id=? ORDER BY effective_on`).bind(id).all()).results.map(cleanRow));
   return reply(data,200,{'headers':{'content-disposition':`attachment; filename="drs-export-${dateOnly(new Date())}.json"`}});
 }
 
