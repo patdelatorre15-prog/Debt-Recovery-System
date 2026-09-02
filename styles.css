@@ -253,3 +253,28 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
   .form-grid { grid-template-columns: 1fr; }
   .field.full { grid-column: auto; }
 }
+
+/* Keep Living Expenses row controls inside each half-width desktop card. */
+@media (min-width: 761px) {
+  .grid-2 .list-row:not(.compact) {
+    grid-template-columns: 48px minmax(0,1fr) auto minmax(72px,auto) auto;
+    gap: 12px;
+  }
+  .grid-2 .goal-row {
+    grid-template-columns: minmax(0,1.2fr) minmax(90px,.75fr) minmax(72px,auto) auto;
+    gap: 12px;
+  }
+  .grid-2 .list-row > *,
+  .grid-2 .goal-row > * { min-width: 0; }
+  .grid-2 .row-actions { min-width: max-content; }
+  .grid-2 .button-secondary,
+  .grid-2 .button-ghost { max-width: 100%; }
+}
+
+@media (min-width: 761px) and (max-width: 1120px) {
+  .grid-2 .list-row:not(.compact),
+  .grid-2 .goal-row { grid-template-columns: 1fr; align-items: start; }
+  .grid-2 .list-row:not(.compact) > *,
+  .grid-2 .goal-row > * { display: block; text-align: left; }
+  .grid-2 .row-actions { justify-content: flex-start; }
+}
