@@ -146,6 +146,28 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
 .activity-icon.warn { color:#8a6429; background:#f6edd9; }
 .admin-pending .admin-shell { visibility:hidden; }
 
+.income-hero { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; margin-bottom:18px; }
+.income-hero-item { min-height:150px; display:flex; align-items:center; gap:16px; padding:24px; border:1px solid var(--line); border-radius:var(--radius); background:var(--paper); box-shadow:var(--shadow); }
+.income-hero-icon { flex:0 0 38px; width:38px; height:38px; display:grid; place-items:center; border-radius:50%; color:var(--green); background:var(--sage); font-weight:800; }
+.income-hero-item.expected .income-hero-icon { color:#b36a31; background:#fff0dc; }
+.income-hero-item > div { min-width:0; flex:1; }
+.next-expected { display:grid; gap:2px; margin-top:13px; padding-top:10px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
+.next-expected b { color:var(--navy); }
+.allocation-summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border:1px solid var(--line); border-radius:13px; overflow:hidden; }
+.allocation-summary-item { min-width:0; padding:14px; border-right:1px solid var(--line); }
+.allocation-summary-item:last-child { border-right:0; }
+.allocation-summary-item > div { display:flex; justify-content:space-between; gap:8px; color:var(--muted); font-size:12px; }
+.allocation-summary-item > div b { color:var(--green); }
+.allocation-summary-item > strong { display:block; margin-top:9px; color:var(--navy); font:700 18px Georgia,serif; }
+.allocation-summary-item > small { display:block; margin-top:3px; color:var(--muted); }
+.expected-income-row { display:grid; grid-template-columns:85px minmax(220px,1fr) auto 125px minmax(250px,auto); gap:14px; align-items:center; padding:15px 0; border-bottom:1px solid var(--line); }
+.expected-income-row:last-child { border-bottom:0; }
+.expected-income-actions { display:flex; justify-content:flex-end; align-items:center; gap:7px; flex-wrap:wrap; min-width:0; }
+.expected-income-actions button { white-space:nowrap; }
+.income-lower .list-row.compact { grid-template-columns:70px minmax(0,1fr) auto auto; }
+.income-lower .activity-row { grid-template-columns:65px 32px minmax(0,1fr) auto 105px; }
+.dashboard-recovery-grid > .card { height:100%; }
+
 .allocation-row { margin-bottom: 14px; }
 .forecast-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; }
 .forecast-grid .metric { min-width:0; }
@@ -232,6 +254,13 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
   .goal-row > :nth-child(2) { display: none; }
   .recovery-hero { grid-template-columns: repeat(2,1fr); gap: 18px 0; }
   .recovery-stat:nth-child(2) { border-right: 0; }
+  .expected-income-row { grid-template-columns:70px minmax(180px,1fr) auto 110px; }
+  .expected-income-actions { grid-column:2/-1; }
+  .income-lower .list-row.compact { grid-template-columns:60px minmax(0,1fr) auto; }
+  .income-lower .list-row.compact > .amount { display:none; }
+  .income-lower .activity-row { grid-template-columns:58px 32px minmax(0,1fr) auto; }
+  .income-lower .activity-row > .amount { display:none; }
+  .dashboard-recovery-grid .wins-grid { grid-template-columns:1fr; }
 }
 
 @media (max-width: 760px) {
@@ -248,6 +277,19 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
   .page-actions { justify-content: flex-start; width: 100%; }
   .page-actions > button { flex: 1; }
   .grid-2, .grid-3, .attention-grid, .wins-grid { grid-template-columns: 1fr; }
+  .income-hero { grid-template-columns:1fr; }
+  .allocation-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .allocation-summary-item:nth-child(2) { border-right:0; }
+  .allocation-summary-item:nth-child(-n+2) { border-bottom:1px solid var(--line); }
+  .expected-income-row { grid-template-columns:1fr auto; gap:9px 12px; }
+  .expected-income-row > .date,.expected-income-copy { grid-column:1; }
+  .expected-income-row > .pill,.expected-income-row > .amount { grid-column:2; justify-self:end; }
+  .expected-income-actions { grid-column:1/-1; justify-content:flex-start; }
+  .expected-income-actions .button-secondary { flex:1; }
+  .income-lower .list-row.compact { grid-template-columns:1fr; align-items:start; }
+  .income-lower .list-row.compact > * { display:block; text-align:left; }
+  .income-lower .activity-row { grid-template-columns:55px 32px minmax(0,1fr); }
+  .income-lower .activity-row > .pill,.income-lower .activity-row > .amount { display:none; }
   .attention-separator { border-left: 0; padding-left: 0; }
   .attention-item { grid-template-columns:1fr auto; padding:14px 0; }
   .attention-item .attention-code { grid-column:1/-1; }
