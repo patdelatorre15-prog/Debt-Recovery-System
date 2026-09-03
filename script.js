@@ -211,6 +211,8 @@ function openModal(config){
   const root=$('#modalRoot');modalReturnFocus=document.activeElement;
   const readOnly=config.form==='noop';
   root.innerHTML=`<div class="modal-backdrop" role="presentation"><section class="modal-panel ${config.wide?'wide':''}" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-header"><div><h2 id="modalTitle">${h(config.title)}</h2><p>${h(config.subtitle||'')}</p></div><button type="button" class="close-button" data-action="close-modal" aria-label="Close">×</button></div><form id="modalForm" method="post" action="javascript:void(0)" data-form="${h(config.form)}">${config.body}<div id="modalError" role="alert" aria-live="assertive"></div><div class="modal-actions">${readOnly?'':`<button type="button" class="button-secondary" data-action="close-modal">Cancel</button>`}<button type="${readOnly?'button':'submit'}" class="button" ${readOnly?'data-action="close-modal"':''}>${h(config.submit||'Save')}</button></div></form></section></div>`;
+  root.querySelectorAll('[data-action="close-modal"]').forEach(button=>button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();closeModal();}));
+  root.querySelector('#modalForm')?.addEventListener('submit',event=>{event.preventDefault();event.stopPropagation();submitForm(event.currentTarget);});
   root.querySelector('input,select,button')?.focus();
 }
 const field=(label,name,type='text',value='',extra='',full='')=>`<div class="field ${full}"><label for="${h(name)}">${h(label)}</label><input id="${h(name)}" name="${h(name)}" type="${h(type)}" value="${h(value)}" ${extra}></div>`;

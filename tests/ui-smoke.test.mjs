@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs';
 
 test('every approved user page renders without a runtime error',()=>{
   const nodes=new Map();
-  const node=selector=>{if(!nodes.has(selector))nodes.set(selector,{innerHTML:'',textContent:'',classList:{add(){},remove(){},toggle(){}},addEventListener(){},querySelector(){return null;},focus(){}});return nodes.get(selector);};
+  const node=selector=>{if(!nodes.has(selector))nodes.set(selector,{innerHTML:'',textContent:'',classList:{add(){},remove(){},toggle(){}},addEventListener(){},querySelector(){return null;},querySelectorAll(){return [];},focus(){}});return nodes.get(selector);};
   const context={console,Date,Intl,Math,JSON,Number,String,Array,Object,Blob,URL,crypto,FormData:class{},localStorage:{getItem(){return null;},setItem(){}},document:{querySelector:node,addEventListener(){},createElement(){return {click(){}};}},window:{DRS_API:{live:false},scrollTo(){},addEventListener(){}},setTimeout,clearTimeout};
   vm.createContext(context);
   const source=readFileSync(new URL('../script.js',import.meta.url),'utf8')+'\n;globalThis.__test={state,render,activityRow,openModal};';
@@ -91,4 +91,11 @@ test('approved dashboard and Income page layouts are rendered',()=>{
   assert.match(output,/Recovery Allocation/);
   assert.match(output,/expected-income-list/);
   assert.match(output,/grid-2 income-lower/);
+});
+
+test('modal actions use direct controls instead of depending only on document delegation',()=>{
+  const script=readFileSync(new URL('../script.js',import.meta.url),'utf8');
+  assert.match(script,/querySelectorAll\('\[data-action="close-modal"\]'\)/);
+  assert.match(script,/querySelector\('#modalForm'\)\?\.addEventListener\('submit'/);
+  assert.match(script,/submitForm\(event\.currentTarget\)/);
 });
