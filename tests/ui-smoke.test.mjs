@@ -64,15 +64,18 @@ test('Living management and ledger reversal controls are present',()=>{
 test('today findings are represented in debt, activity, fund, and recovery layouts',()=>{
   const script=readFileSync(new URL('../script.js',import.meta.url),'utf8'),api=readFileSync(new URL('../api-client.js',import.meta.url),'utf8'),css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
   assert.match(script,/Due Today/);
-  assert.match(script,/Upcoming \(Next Month\)/);
+  assert.match(script,/debtFilterLabel/);
+  assert.match(script,/Expected income plan/);
+  assert.match(script,/expectedIncomeId/);
   assert.match(script,/total ·.*active ·.*paid/);
-  assert.match(script,/Next due date/);
+  assert.match(script,/Remaining due/);
   assert.match(script,/active debt already uses this creditor \/ agreement name/i);
   assert.match(api,/dueDate:data\.dueDate/);
   assert.match(api,/duplicate_debt_account/);
   assert.match(css,/\.funds-metrics \{ grid-template-columns:repeat\(3/);
-  assert.match(css,/\.recovery-stat \.metric-value \{[^}]*white-space:nowrap/);
-  assert.match(css,/\.debt-board \{ display:grid; grid-template-columns:repeat\(4/);
+  assert.match(css,/\.dashboard-recovery-grid \.recovery-hero/);
+  assert.match(css,/\.debt-filters/);
+  assert.match(css,/\.debt-accounts-table/);
 });
 
 test('approved dashboard and Income page layouts are rendered',()=>{

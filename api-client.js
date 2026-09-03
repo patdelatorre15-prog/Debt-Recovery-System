@@ -20,7 +20,7 @@
       'expected-income':()=>post('/api/expected-income',{expectedOn:data.date,name:data.name,source:data.source,amount:data.amount}),
       'expected-income-update':()=>post('/api/expected-income/update',{id:data.id,expectedOn:data.date,name:data.name,source:data.source,amount:data.amount}),
       'expected-income-cancel':()=>post('/api/expected-income/cancel',{id:data.id}),
-      'receive-expected':()=>post('/api/expected-income/receive',{expectedIncomeId:data.id,date:data.date,amount:data.amount}),
+      'receive-expected':()=>post('/api/expected-income/receive',{expectedIncomeId:data.expectedIncomeId||data.id,date:data.date,amount:data.amount}),
       'cost-plans':()=>post('/api/living-plans/bulk',{rows:data.rows}),
       'budget-plans':()=>post('/api/living-budgets/bulk',{rows:data.rows}),
       'bill-plans':()=>post('/api/living-bill-plans/bulk',{rows:data.rows}),
