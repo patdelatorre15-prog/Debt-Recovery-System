@@ -25,6 +25,7 @@ function setup(){
   DB.exec(readFileSync(new URL('../worker/migrations/0001_initial.sql',import.meta.url),'utf8'));
   DB.exec(readFileSync(new URL('../worker/migrations/0002_operations.sql',import.meta.url),'utf8'));
   DB.exec(readFileSync(new URL('../worker/migrations/0003_cycle1_fixes.sql',import.meta.url),'utf8'));
+  DB.exec(readFileSync(new URL('../worker/migrations/0004_living_management_and_reversals.sql',import.meta.url),'utf8'));
   const env={DB,ALLOWED_ORIGINS:'https://review.example',GOOGLE_CLIENT_ID:'google-client',PAYMENT_PROVIDER_MODE:'disabled',EMAIL_PROVIDER_MODE:'development',BREVO_SENDER_EMAIL:'tiny.tools.studio.ph@gmail.com'};
   return {DB,env};
 }
@@ -75,6 +76,36 @@ test('Cycle 1 plan editing, bulk Cost of Living, and explicit Recovery start per
   result=await call(env,'/api/recovery/start',{method:'POST',body:{date:today,targetBalance:0,targetDate:'2027-09-01'}});assert.equal(result.response.status,201);assert.equal(result.data.startingDebtMinor,100000);
   assert.equal(DB.prepare("SELECT journey_start_balance_minor FROM debts WHERE id=?").bind(result.data.debtId||'missing').first(),null);
   assert.equal(DB.prepare("SELECT starting_debt_minor FROM recovery_journeys WHERE user_id='u1'").first().starting_debt_minor,100000);
+});
+
+test('Living managers, zero-payment bill save, settlement, and audited reversal reconcile',async()=>{
+  const {DB,env}=setup();await seedUser(DB);
+  let result=await call(env,'/api/living-budgets/bulk',{method:'POST',body:{rows:[{name:'Groceries',amount:400,active:true}]}});assert.equal(result.response.status,201);
+  result=await call(env,'/api/living-bill-plans/bulk',{method:'POST',body:{rows:[{biller:'Electricity',amount:200,dueDay:5,dueDaySecondary:20,frequency:'twice_monthly',active:true}]}});assert.equal(result.response.status,201);
+  result=await call(env,'/api/living-plans');const bill=result.data.items.find(x=>x.name==='Electricity');assert.equal(bill.frequency,'twice_monthly');assert.equal(bill.due_day_secondary,20);
+  result=await call(env,'/api/living-bills/pay',{method:'POST',body:{planId:bill.id,paymentDate:today,actualAmount:250,paidAmount:0,settlesFull:false}});assert.equal(result.response.status,201);assert.equal(result.data.status,'unpaid');assert.equal(result.data.ledgerEntryId,null);assert.equal(DB.prepare("SELECT COUNT(*) count FROM ledger_entries WHERE entry_type='bill_payment'").first().count,0);
+  await call(env,'/api/funds/direct',{method:'POST',body:{date:today,category:'living',source:'Salary',amount:500,note:'Bill funds'}});
+  result=await call(env,'/api/living-bills/pay',{method:'POST',body:{planId:bill.id,paymentDate:today,actualAmount:250,paidAmount:250,settlesFull:false}});assert.equal(result.response.status,409);assert.equal(result.data.error,'bill_difference_confirmation_required');
+  result=await call(env,'/api/living-bills/pay',{method:'POST',body:{planId:bill.id,paymentDate:today,actualAmount:250,paidAmount:250,settlesFull:true}});assert.equal(result.response.status,201);assert.equal(result.data.status,'paid');const paymentId=result.data.ledgerEntryId;
+  result=await call(env,'/api/ledger/reverse',{method:'POST',body:{entryId:paymentId,date:today,note:'Payment entered against the wrong statement'}});assert.equal(result.response.status,201);assert.equal(result.data.reversedCount,1);
+  assert.equal(DB.prepare("SELECT status FROM living_bill_instances WHERE plan_id=?").bind(bill.id).first().status,'unpaid');
+  assert.equal(DB.prepare("SELECT COALESCE(SUM(amount_minor),0) balance FROM ledger_entries WHERE user_id='u1' AND category='living'").first().balance,50000);
+  result=await call(env,'/api/ledger/reverse',{method:'POST',body:{entryId:paymentId,date:today,note:'Second attempt'}});assert.equal(result.response.status,409);assert.equal(result.data.error,'ledger_entry_already_reversed');
+  result=await call(env,'/api/activity?category=living&limit=100');assert.equal(result.data.items.some(x=>x.entry_type==='reversal'),true);assert.equal(result.data.items.find(x=>x.id===paymentId).reversed,1);
+});
+
+test('Reversing an allocation or transfer reverses the complete linked transaction',async()=>{
+  const {DB,env}=setup();await seedUser(DB);
+  let result=await call(env,'/api/income',{method:'POST',body:{date:today,source:'Salary',description:'Linked income',amount:1000},headers:{'idempotency-key':'linked-income'}});assert.equal(result.response.status,201);
+  const allocation=DB.prepare("SELECT id FROM ledger_entries WHERE source_entry_id=? AND category='living'").bind(result.data.id).first();
+  result=await call(env,'/api/ledger/reverse',{method:'POST',body:{entryId:allocation.id,date:today,note:'Income was entered in error'}});assert.equal(result.response.status,201);assert.equal(result.data.reversedCount,5);
+  assert.equal(DB.prepare("SELECT COALESCE(SUM(amount_minor),0) balance FROM ledger_entries WHERE user_id='u1' AND category='living'").first().balance,0);
+  await call(env,'/api/funds/direct',{method:'POST',body:{date:today,category:'living',source:'Other',amount:100,note:'Transfer fixture'}});
+  result=await call(env,'/api/funds/transfer',{method:'POST',body:{date:today,from:'living',to:'debt',amount:40}});const transferId=result.data.id;
+  const transferEntry=DB.prepare("SELECT id FROM ledger_entries WHERE related_type='transfer' AND related_id=? LIMIT 1").bind(transferId).first();
+  result=await call(env,'/api/ledger/reverse',{method:'POST',body:{entryId:transferEntry.id,date:today,note:'Transfer destination was incorrect'}});assert.equal(result.response.status,201);assert.equal(result.data.reversedCount,2);
+  assert.equal(DB.prepare("SELECT COALESCE(SUM(amount_minor),0) balance FROM ledger_entries WHERE user_id='u1' AND category='living'").first().balance,10000);
+  assert.equal(DB.prepare("SELECT COALESCE(SUM(amount_minor),0) balance FROM ledger_entries WHERE user_id='u1' AND category='debt'").first().balance,0);
 });
 
 test('Payhip webhook verification, mapping, idempotency and entitlement activation execute end to end',async()=>{

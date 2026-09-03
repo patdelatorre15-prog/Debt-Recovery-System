@@ -36,8 +36,8 @@ test('responsive and accessibility foundations are present',()=>{
 test('Cycle 1 workflows are present without legacy demo fallbacks',()=>{
   const script=readFileSync(new URL('../script.js',import.meta.url),'utf8'),api=readFileSync(new URL('../api-client.js',import.meta.url),'utf8'),admin=readFileSync(new URL('../admin.html',import.meta.url),'utf8');
   assert.match(script,/Review income allocation/);
-  assert.match(script,/Manage Cost of Living/);
-  assert.match(script,/Record current bill/);
+  assert.match(script,/Manage Monthly Spending/);
+  assert.match(script,/Manage Bills/);
   assert.match(script,/function attentionItems\(\)/);
   assert.match(script,/id="moveForm"/);
   assert.match(script,/data-action="logout"/);
@@ -46,4 +46,32 @@ test('Cycle 1 workflows are present without legacy demo fallbacks',()=>{
   assert.match(api,/expected-income\/update/);
   assert.match(api,/living-plans\/bulk/);
   assert.match(admin,/class="admin-pending"/);
+});
+
+test('Living management and ledger reversal controls are present',()=>{
+  const script=readFileSync(new URL('../script.js',import.meta.url),'utf8'),api=readFileSync(new URL('../api-client.js',import.meta.url),'utf8');
+  assert.match(script,/Manage Monthly Spending/);
+  assert.match(script,/Manage Bills/);
+  assert.match(script,/Planned amount/);
+  assert.match(script,/Actual amount/);
+  assert.match(script,/Paid amount/);
+  assert.match(script,/This payment settles the bill in full/);
+  assert.match(script,/Twice a month/);
+  assert.match(script,/Required note/);
+  assert.match(api,/ledger\/reverse/);
+});
+
+test('approved dashboard and Income page layouts are rendered',()=>{
+  const nodes=new Map(),node=selector=>{if(!nodes.has(selector))nodes.set(selector,{innerHTML:'',textContent:'',classList:{add(){},remove(){},toggle(){}},addEventListener(){},querySelector(){return null;},focus(){}});return nodes.get(selector);};
+  const context={console,Date,Intl,Math,JSON,Number,String,Array,Object,Blob,URL,crypto,FormData:class{},localStorage:{getItem(){return null;},setItem(){}},document:{querySelector:node,addEventListener(){},createElement(){return {click(){}};}},window:{DRS_API:{live:false},scrollTo(){},addEventListener(){}},setTimeout,clearTimeout};
+  vm.createContext(context);vm.runInContext(readFileSync(new URL('../script.js',import.meta.url),'utf8')+'\n;globalThis.__test={state,render};',context);
+  context.__test.state.page='dashboard';context.__test.render();let output=node('#app').innerHTML;
+  assert.doesNotMatch(output,/Monthly allocation/);
+  assert.match(output,/grid-2 dashboard-recovery-grid/);
+  assert.ok(output.indexOf('Recovery snapshot')<output.indexOf('Wins &amp; milestones'));
+  context.__test.state.page='income';context.__test.render();output=node('#app').innerHTML;
+  assert.match(output,/class="income-hero"/);
+  assert.match(output,/Recovery Allocation/);
+  assert.match(output,/expected-income-list/);
+  assert.match(output,/grid-2 income-lower/);
 });
