@@ -189,11 +189,11 @@ async function createAllocatedIncome(env,user,{amount,occurred,description,sourc
 }
 
 async function directFunds(request,env,user){
-  const b=await readJson(request),category=validCategory(b.category),amount=moneyMinor(b.amount),occurred=validDate(b.date);
+  const b=await readJson(request),category=validCategory(b.category),amount=moneyMinor(b.amount),occurred=validDate(b.date),source=clean(b.source,80),note=clean(b.note,300);
   if(!category||amount<=0||!occurred)return reply({error:'invalid_direct_funds'},400);
   const id=crypto.randomUUID(),now=new Date().toISOString();
   await env.DB.prepare(`INSERT INTO ledger_entries(id,user_id,occurred_on,entry_type,category,amount_minor,description,metadata_json,created_at,idempotency_key)
-    VALUES(?,?,?,?,?,?,?,?,?,?)`).bind(id,user.id,occurred,'direct_funds',category,amount,clean(b.note,300),JSON.stringify({source:clean(b.source,80),autoAllocated:false}),now,idempotency(request)).run();
+    VALUES(?,?,?,?,?,?,?,?,?,?)`).bind(id,user.id,occurred,'direct_funds',category,amount,note||`Direct funds · ${source||'Other'}`,JSON.stringify({source,autoAllocated:false}),now,idempotency(request)).run();
   return reply({id,amountMinor:amount,category},201);
 }
 
@@ -337,13 +337,13 @@ async function reverseLedgerEntry(request,env,user){
 }
 
 async function listDebts(env,user){
-  const result=await env.DB.prepare(`SELECT d.*,c.name creditor_name,(SELECT json_object('effectiveOn',v.effective_on,'paymentAmountMinor',v.payment_amount_minor,'dueDate',v.due_date,'interestMode',v.interest_mode,'interestValue',v.interest_value,'interestFrequency',v.interest_frequency,'paymentPaused',v.payment_paused) FROM debt_agreement_versions v WHERE v.debt_id=d.id ORDER BY v.effective_on DESC,v.created_at DESC LIMIT 1) agreement FROM debts d JOIN creditors c ON c.id=d.creditor_id WHERE d.user_id=? AND d.status!='archived' ORDER BY CASE d.status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 WHEN 'paid' THEN 2 ELSE 3 END,c.name`).bind(user.id).all();
+  const result=await env.DB.prepare(`SELECT d.*,c.name creditor_name,(SELECT json_object('effectiveOn',v.effective_on,'paymentAmountMinor',v.payment_amount_minor,'dueDate',v.due_date,'interestMode',v.interest_mode,'interestValue',v.interest_value,'interestFrequency',v.interest_frequency,'paymentPaused',v.payment_paused) FROM debt_agreement_versions v WHERE v.debt_id=d.id ORDER BY v.created_at DESC,v.effective_on DESC LIMIT 1) agreement FROM debts d JOIN creditors c ON c.id=d.creditor_id WHERE d.user_id=? ORDER BY CASE d.status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 WHEN 'paid' THEN 2 WHEN 'archived' THEN 3 ELSE 4 END,c.name`).bind(user.id).all();
   return reply({items:result.results.map(x=>({...x,agreement:x.agreement?JSON.parse(x.agreement):null}))});
 }
 
 async function debtHistory(id,env,user){
   const debt=await env.DB.prepare(`SELECT d.*,c.name creditor_name FROM debts d JOIN creditors c ON c.id=d.creditor_id WHERE d.id=? AND d.user_id=?`).bind(id,user.id).first();if(!debt)return reply({error:'debt_not_found'},404);
-  const [agreements,activity,interest]=await Promise.all([env.DB.prepare(`SELECT * FROM debt_agreement_versions WHERE debt_id=? ORDER BY effective_on DESC,created_at DESC`).bind(id).all(),env.DB.prepare(`SELECT * FROM ledger_entries WHERE user_id=? AND related_type='debt' AND related_id=? ORDER BY occurred_on DESC,created_at DESC`).bind(user.id,id).all(),env.DB.prepare(`SELECT cycle_on,amount_minor,agreement_version_id FROM scheduled_interest_charges WHERE user_id=? AND debt_id=? ORDER BY cycle_on DESC`).bind(user.id,id).all()]);
+  const [agreements,activity,interest]=await Promise.all([env.DB.prepare(`SELECT * FROM debt_agreement_versions WHERE debt_id=? ORDER BY created_at DESC,effective_on DESC`).bind(id).all(),env.DB.prepare(`SELECT * FROM ledger_entries WHERE user_id=? AND related_type='debt' AND related_id=? ORDER BY occurred_on DESC,created_at DESC`).bind(user.id,id).all(),env.DB.prepare(`SELECT cycle_on,amount_minor,agreement_version_id FROM scheduled_interest_charges WHERE user_id=? AND debt_id=? ORDER BY cycle_on DESC`).bind(user.id,id).all()]);
   return reply({debt,agreements:agreements.results,activity:activity.results,interest:interest.results});
 }
 
@@ -351,13 +351,14 @@ async function createDebt(request,env,user){
   const b=await readJson(request),balance=moneyMinor(b.currentBalance),payment=moneyMinor(b.paymentAmount),due=validDate(b.dueDate),creditor=clean(b.creditor,120),mode=interestMode(b.interestMode),frequency=interestFrequency(b.interestFrequency),now=new Date().toISOString();
   if(!creditor||balance<=0||payment<0||!due||!mode||!frequency)return reply({error:'invalid_debt'},400);
   let c=await env.DB.prepare('SELECT id FROM creditors WHERE user_id=? AND lower(name)=lower(?)').bind(user.id,creditor).first();
+  if(c&&await env.DB.prepare(`SELECT d.id FROM debts d WHERE d.user_id=? AND d.creditor_id=? AND d.status!='archived' LIMIT 1`).bind(user.id,c.id).first())return reply({error:'duplicate_debt_account'},409);
   const journey=await env.DB.prepare(`SELECT started_on FROM recovery_journeys WHERE user_id=?`).bind(user.id).first();
   const creditorId=c?.id||crypto.randomUUID(),debtId=crypto.randomUUID();
   const statements=[];
   if(!c)statements.push(env.DB.prepare('INSERT INTO creditors(id,user_id,name,active,created_at,updated_at) VALUES(?,?,?,?,?,?)').bind(creditorId,user.id,creditor,1,now,now));
   else statements.push(env.DB.prepare('UPDATE creditors SET active=1,updated_at=? WHERE id=? AND user_id=?').bind(now,creditorId,user.id));
   statements.push(env.DB.prepare(`INSERT INTO debts(id,user_id,creditor_id,journey_start_balance_minor,current_balance_minor,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`).bind(debtId,user.id,creditorId,journey?0:balance,balance,b.paused?'paused':'active',now,now));
-  statements.push(env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,payment_frequency,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),debtId,due,payment,due,clean(b.paymentFrequency,20)||'monthly',mode,Number(b.interestValue||0),frequency,clean(b.interestBasis,20)||'remaining',b.paused?1:0,'created',clean(b.notes,1000),now));
+  statements.push(env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,payment_frequency,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),debtId,dateOnly(new Date()),payment,due,clean(b.paymentFrequency,20)||'monthly',mode,Number(b.interestValue||0),frequency,clean(b.interestBasis,20)||'remaining',b.paused?1:0,'created',clean(b.notes,1000),now));
   if(journey)statements.push(env.DB.prepare(`UPDATE recovery_journeys SET no_new_debt_since=?,updated_at=? WHERE user_id=?`).bind(dateOnly(new Date()),now,user.id));
   statements.push(ledger(env,{id:crypto.randomUUID(),user,occurred:dateOnly(new Date()),type:'new_debt',category:'debt_adjustment',amount:balance,relatedType:'debt',relatedId:debtId,description:`New debt · ${creditor}`,key:idempotency(request),now}));
   await env.DB.batch(statements); return reply({id:debtId,currentBalanceMinor:balance},201);

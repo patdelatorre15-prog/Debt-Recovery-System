@@ -61,6 +61,20 @@ test('Living management and ledger reversal controls are present',()=>{
   assert.match(api,/ledger\/reverse/);
 });
 
+test('today findings are represented in debt, activity, fund, and recovery layouts',()=>{
+  const script=readFileSync(new URL('../script.js',import.meta.url),'utf8'),api=readFileSync(new URL('../api-client.js',import.meta.url),'utf8'),css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
+  assert.match(script,/Due Today/);
+  assert.match(script,/Upcoming \(Next Month\)/);
+  assert.match(script,/total ·.*active ·.*paid/);
+  assert.match(script,/Next due date/);
+  assert.match(script,/active debt already uses this creditor \/ agreement name/i);
+  assert.match(api,/dueDate:data\.dueDate/);
+  assert.match(api,/duplicate_debt_account/);
+  assert.match(css,/\.funds-metrics \{ grid-template-columns:repeat\(3/);
+  assert.match(css,/\.recovery-stat \.metric-value \{[^}]*white-space:nowrap/);
+  assert.match(css,/\.debt-board \{ display:grid; grid-template-columns:repeat\(4/);
+});
+
 test('approved dashboard and Income page layouts are rendered',()=>{
   const nodes=new Map(),node=selector=>{if(!nodes.has(selector))nodes.set(selector,{innerHTML:'',textContent:'',classList:{add(){},remove(){},toggle(){}},addEventListener(){},querySelector(){return null;},focus(){}});return nodes.get(selector);};
   const context={console,Date,Intl,Math,JSON,Number,String,Array,Object,Blob,URL,crypto,FormData:class{},localStorage:{getItem(){return null;},setItem(){}},document:{querySelector:node,addEventListener(){},createElement(){return {click(){}};}},window:{DRS_API:{live:false},scrollTo(){},addEventListener(){}},setTimeout,clearTimeout};

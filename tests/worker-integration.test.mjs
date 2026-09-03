@@ -66,6 +66,18 @@ test('Debt safeguards, account history and recovery calculations execute against
   result=await call(env,'/api/debts/archive',{method:'POST',body:{debtId}});assert.equal(result.response.status,409);assert.equal(result.data.error,'only_fully_paid_debt_can_be_archived');
 });
 
+test('Goal allocation, agreement updates, and duplicate debt safeguards persist correctly',async()=>{
+  const {DB,env}=setup();await seedUser(DB);
+  await call(env,'/api/funds/direct',{method:'POST',body:{date:today,category:'savings',source:'Salary',amount:500,note:''}});
+  let result=await call(env,'/api/goals',{method:'POST',body:{category:'savings',name:'Emergency Buffer',goalType:'target',targetAmount:1000}});assert.equal(result.response.status,201);const goalId=result.data.id;
+  result=await call(env,'/api/goals/allocate',{method:'POST',body:{date:today,goalId,amount:100}});assert.equal(result.response.status,201);
+  result=await call(env,'/api/goals');assert.equal(result.data.items.find(x=>x.id===goalId).saved_minor,10000);
+  result=await call(env,'/api/debts',{method:'POST',body:{creditor:'Creditor A — Card',currentBalance:1000,dueDate:'2026-09-05',paymentAmount:100,interestMode:'none',interestFrequency:'monthly'}});assert.equal(result.response.status,201);const debtId=result.data.id;
+  result=await call(env,'/api/debts',{method:'POST',body:{creditor:'creditor a — card',currentBalance:500,dueDate:'2026-09-15',paymentAmount:50,interestMode:'none',interestFrequency:'monthly'}});assert.equal(result.response.status,409);assert.equal(result.data.error,'duplicate_debt_account');
+  result=await call(env,'/api/debts/agreement',{method:'POST',body:{debtId,effectiveOn:'2026-09-04',dueDate:'2026-09-20',reason:'agreement',currentBalance:1000,paymentAmount:125,paymentFrequency:'monthly',interestMode:'none',interestValue:0,interestFrequency:'monthly',interestBasis:'remaining',paused:false}});assert.equal(result.response.status,201);
+  result=await call(env,`/api/debts/${debtId}/history`);assert.equal(result.data.agreements[0].due_date,'2026-09-20');assert.equal(result.data.agreements[0].payment_amount_minor,12500);
+});
+
 test('Cycle 1 plan editing, bulk Cost of Living, and explicit Recovery start persist correctly',async()=>{
   const {DB,env}=setup();await seedUser(DB);
   let result=await call(env,'/api/expected-income',{method:'POST',body:{expectedOn:today,name:'Salary',source:'Salary',amount:2000}});assert.equal(result.response.status,201);const expectedId=result.data.id;
