@@ -107,3 +107,13 @@ test('income breakdown uses the allocation snapshot saved with that income',()=>
   assert.match(api,/incomeAllocations\(activity\.items,x\.id\)/);
   assert.match(api,/x\.source_entry_id===incomeId/);
 });
+
+test('every saved modal form has a production persistence contract',()=>{
+  const script=readFileSync(new URL('../script.js',import.meta.url),'utf8'),api=readFileSync(new URL('../api-client.js',import.meta.url),'utf8'),worker=readFileSync(new URL('../worker/src/index.js',import.meta.url),'utf8');
+  const forms=[...script.matchAll(/form:'([a-z-]+)'/g)].map(x=>x[1]);
+  const special=new Set(['noop','income','income-confirm']);
+  for(const form of new Set(forms))if(!special.has(form))assert.match(api,new RegExp(`['"]?${form}['"]?:(?:async)?\\(\\)=>`),`${form} is mapped in the production client`);
+  const paths=[...api.matchAll(/post\('([^']+)'/g)].map(x=>x[1]);
+  for(const path of new Set(paths))assert.ok(worker.includes(`POST ${path}`),`${path} is routed by the Worker`);
+  assert.match(worker,/2026-09-03-v7-modal-contract/);
+});

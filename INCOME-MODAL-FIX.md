@@ -14,7 +14,7 @@ On the Income page, the Receive, Edit, and Cancel dialogs opened, but their inte
 ## Verification
 
 - JavaScript syntax check passed.
-- Full automated test suite passed: 32 of 32 tests.
+- Full automated test suite passed: 33 of 33 tests.
 
 ## Historical allocation correction
 
@@ -29,3 +29,11 @@ On the Income page, the Receive, Edit, and Cancel dialogs opened, but their inte
 - Both Worker entrypoints accept either identifier consistently.
 - Expected-status matching is normalized before an update or cancellation.
 - Added database-backed production-route tests for editing and cancelling an expected-income plan.
+
+## All-modal contract audit
+
+- Audited every saved popup form across all user pages.
+- Confirmed every saved form has a production persistence handler.
+- Confirmed every frontend POST path has a matching Worker route.
+- Added a regression test that fails if a future modal or endpoint is missing from either side.
+- Added Worker health build `2026-09-03-v7-modal-contract` for deployment verification.

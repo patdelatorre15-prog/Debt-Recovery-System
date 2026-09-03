@@ -9,7 +9,7 @@ export default {
       const url = new URL(request.url);
       const route = `${request.method} ${url.pathname}`;
       if(['POST','PUT','DELETE'].includes(request.method)&&route!=='POST /api/webhooks/payment'&&!originAllowed(request,env))return cors(reply({error:'origin_not_allowed'},403),request,env);
-      if (route === 'GET /api/health') return reply({ok:true,service:'debt-recovery-system-api'});
+      if (route === 'GET /api/health') return reply({ok:true,service:'debt-recovery-system-api',build:'2026-09-03-v7-modal-contract'});
       if (route === 'POST /api/auth/google') return cors(await googleLogin(request,env),request,env);
       if (route === 'POST /api/auth/logout') return cors(await logout(request,env),request,env);
       if (route === 'POST /api/webhooks/payment') return cors(await paymentWebhook(request,env),request,env);
