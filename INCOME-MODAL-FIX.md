@@ -14,4 +14,18 @@ On the Income page, the Receive, Edit, and Cancel dialogs opened, but their inte
 ## Verification
 
 - JavaScript syntax check passed.
-- Full automated test suite passed: 30 of 30 tests.
+- Full automated test suite passed: 32 of 32 tests.
+
+## Historical allocation correction
+
+- Income breakdowns now use the allocation ledger entries linked to the selected income record.
+- Each breakdown retains the percentage and amount applied when that income was received.
+- Changing the current allocation percentages affects future income only.
+- Local visual-review records also save an allocation snapshot when income is received.
+
+## Expected Income Edit and Cancel API correction
+
+- Edit and Cancel now send both compatible expected-income identifier fields.
+- Both Worker entrypoints accept either identifier consistently.
+- Expected-status matching is normalized before an update or cancellation.
+- Added database-backed production-route tests for editing and cancelling an expected-income plan.

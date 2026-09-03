@@ -54,6 +54,22 @@ test('Worker and D1 execute authenticated income, allocation, transfer and dashb
   assert.ok(DB.queryCount<=10,`dashboard used ${DB.queryCount} D1 statements`);assert.ok(elapsed<50,`local dashboard logic took ${elapsed.toFixed(2)}ms`);
 });
 
+test('Expected Income edit and cancel persist through their production API routes',async()=>{
+  const {DB,env}=setup();await seedUser(DB);
+  let result=await call(env,'/api/expected-income',{method:'POST',body:{expectedOn:'2026-09-10',name:'10th of the Month',source:'Salary',amount:10000}});
+  assert.equal(result.response.status,201);const editId=result.data.id;
+  result=await call(env,'/api/expected-income/update',{method:'POST',body:{expectedIncomeId:editId,expectedOn:'2026-09-15',name:'10th of the Month',source:'Other income',amount:50000}});
+  assert.equal(result.response.status,200);
+  let saved=DB.prepare('SELECT * FROM expected_income WHERE id=?').bind(editId).first();
+  assert.equal(saved.expected_on,'2026-09-15');assert.equal(saved.source,'Other income');assert.equal(saved.amount_minor,5000000);
+
+  result=await call(env,'/api/expected-income',{method:'POST',body:{expectedOn:'2026-09-20',name:'Second plan',source:'Salary',amount:2000}});
+  assert.equal(result.response.status,201);const cancelId=result.data.id;
+  result=await call(env,'/api/expected-income/cancel',{method:'POST',body:{expectedIncomeId:cancelId}});
+  assert.equal(result.response.status,200);
+  saved=DB.prepare('SELECT * FROM expected_income WHERE id=?').bind(cancelId).first();assert.equal(saved.status,'cancelled');
+});
+
 test('Debt safeguards, account history and recovery calculations execute against D1',async()=>{
   const {DB,env}=setup();await seedUser(DB);
   await call(env,'/api/funds/direct',{method:'POST',body:{date:today,category:'debt',source:'Freelance',amount:600,note:'Debt only'},headers:{'idempotency-key':'fund-1'}});

@@ -151,15 +151,15 @@ async function saveExpectedIncome(request,env,user){
   await env.DB.prepare(`INSERT INTO expected_income(id,user_id,expected_on,name,source,amount_minor,status,created_at,updated_at) VALUES(?,?,?,?,?,?,'expected',?,?)`).bind(id,user.id,expected,name,source,amount,now,now).run();return reply({id,status:'expected'},201);
 }
 async function updateExpectedIncome(request,env,user){
-  const b=await readJson(request),id=String(b.id||''),name=clean(b.name,120),source=clean(b.source,80),amount=moneyMinor(b.amount),expected=validDate(b.expectedOn),now=new Date().toISOString();
+  const b=await readJson(request),id=String(b.id||b.expectedIncomeId||''),name=clean(b.name,120),source=clean(b.source,80),amount=moneyMinor(b.amount),expected=validDate(b.expectedOn),now=new Date().toISOString();
   if(!id||!name||!source||amount<=0||!expected)return reply({error:'invalid_expected_income'},400);
-  const result=await env.DB.prepare(`UPDATE expected_income SET expected_on=?,name=?,source=?,amount_minor=?,updated_at=? WHERE id=? AND user_id=? AND status='expected'`).bind(expected,name,source,amount,now,id,user.id).run();
+  const result=await env.DB.prepare(`UPDATE expected_income SET expected_on=?,name=?,source=?,amount_minor=?,updated_at=? WHERE id=? AND user_id=? AND lower(status)='expected'`).bind(expected,name,source,amount,now,id,user.id).run();
   if(!result.meta?.changes)return reply({error:'expected_income_not_available'},409);
   return reply({id,status:'expected',expectedOn:expected},200);
 }
 async function cancelExpectedIncome(request,env,user){
-  const b=await readJson(request),id=String(b.id||''),now=new Date().toISOString();
-  const result=await env.DB.prepare(`UPDATE expected_income SET status='cancelled',updated_at=? WHERE id=? AND user_id=? AND status='expected'`).bind(now,id,user.id).run();
+  const b=await readJson(request),id=String(b.id||b.expectedIncomeId||''),now=new Date().toISOString();
+  const result=await env.DB.prepare(`UPDATE expected_income SET status='cancelled',updated_at=? WHERE id=? AND user_id=? AND lower(status)='expected'`).bind(now,id,user.id).run();
   if(!result.meta?.changes)return reply({error:'expected_income_not_available'},409);
   return reply({id,status:'cancelled'},200);
 }

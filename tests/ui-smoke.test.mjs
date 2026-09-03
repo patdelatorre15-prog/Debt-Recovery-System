@@ -99,3 +99,11 @@ test('modal actions use direct controls instead of depending only on document de
   assert.match(script,/querySelector\('#modalForm'\)\?\.addEventListener\('submit'/);
   assert.match(script,/submitForm\(event\.currentTarget\)/);
 });
+
+test('income breakdown uses the allocation snapshot saved with that income',()=>{
+  const script=readFileSync(new URL('../script.js',import.meta.url),'utf8'),api=readFileSync(new URL('../api-client.js',import.meta.url),'utf8');
+  assert.match(script,/i\.allocations\?\.length\?i\.allocations/);
+  assert.match(script,/allocations:state\.allocations\.map/);
+  assert.match(api,/incomeAllocations\(activity\.items,x\.id\)/);
+  assert.match(api,/x\.source_entry_id===incomeId/);
+});
