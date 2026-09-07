@@ -73,11 +73,8 @@ function activityRow(a,allowDelete=false){
 
 function attentionItems(){
   const items=[];
-  const monthEnd=`${MONTH}-${String(new Date(Number(MONTH.slice(0,4)),Number(MONTH.slice(5,7)),0).getDate()).padStart(2,'0')}`;
-  state.bills.forEach(b=>{const unpaid=billRemaining(b);if(!unpaid||!dueOnOrBefore(b.dueOn,monthEnd))return;const overdue=b.dueOn<TODAY;items.push({severity:overdue?'Overdue':'Bill',category:'Living Expenses',name:b.name,amount:unpaid,due:b.dueOn,detail:b.status==='Needs review'?`Actual exceeds the ${money(b.plan)} plan.`:'Current bill remains unpaid.',impact:'Counts toward unpaid obligations.',action:'pay-bill',id:b.id,priority:overdue?1:b.status==='Needs review'?2:4});});
-  openDebts().forEach(d=>{const remaining=debtRemaining(d);if(!remaining||!dueOnOrBefore(d.dueDate,monthEnd))return;const overdue=d.dueDate<TODAY;items.push({severity:overdue?'Overdue':'Debt',category:'Debt',name:d.creditor,amount:remaining,due:d.dueDate,detail:'Scheduled payment remains due.',impact:'Reduces this month’s projected position.',action:'record-payment',id:d.id,priority:overdue?1:3});});
-  Object.entries(state.funds).filter(([,v])=>v<0).forEach(([key,v])=>items.push({severity:'Shortfall',category:labelFor(key),name:`${labelFor(key)} balance`,amount:Math.abs(v),due:'',detail:'The category is below zero.',impact:'Future allocations cover this negative balance first.',action:'move-funds',id:'',priority:2}));
-  state.expected.filter(x=>x.status==='Expected'&&x.date<TODAY).forEach(x=>items.push({severity:'Income overdue',category:'Income',name:x.name,amount:x.amount,due:x.date,detail:'Expected income has not been received or cancelled.',impact:'It should not be counted as available cash.',action:'edit-expected',id:x.id,priority:2}));
+  state.bills.forEach(b=>{const unpaid=billRemaining(b);if(!unpaid||!b.dueOn||b.dueOn>=TODAY)return;items.push({severity:'Overdue',category:'Living Expenses',name:b.name,amount:unpaid,due:b.dueOn,detail:b.status==='Needs review'?`Actual exceeds the ${money(b.plan)} plan.`:'Current bill remains unpaid.',impact:'Counts toward unpaid obligations.',action:'pay-bill',id:b.id,priority:1});});
+  openDebts().forEach(d=>{const remaining=debtRemaining(d);if(!remaining||!d.dueDate||d.dueDate>=TODAY)return;items.push({severity:'Overdue',category:'Debt',name:d.creditor,amount:remaining,due:d.dueDate,detail:'Scheduled payment remains due.',impact:'Reduces this month’s projected position.',action:'record-payment',id:d.id,priority:1});});
   return items.sort((a,b)=>a.priority-b.priority||(a.due||'9999').localeCompare(b.due||'9999'));
 }
 
