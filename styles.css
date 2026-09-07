@@ -229,7 +229,8 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
 .debt-card-figures small { color:var(--muted); font-size:10px; }
 .debt-card-figures b { margin-top:2px; font-size:13px; white-space:nowrap; }
 .debt-account-card .row-actions { justify-content:flex-start; flex-wrap:wrap; }
-.paid-debts { margin-top:24px; padding:20px; border:1px solid var(--line); border-radius:16px; background:#f4f7f1; }
+.debt-special-section { margin-top:24px; padding:20px; border:1px solid var(--line); border-radius:16px; background:#f4f7f1; }
+.paused-debts { background:#faf7ef; border-color:#e2d9c4; }
 .paid-debts-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:14px; }
 .paid-debts-heading h3 { margin:0; font-family:var(--serif); font-size:20px; color:var(--navy); }
 .paid-debts-heading p { margin:4px 0 0; color:var(--muted); font-size:13px; }
