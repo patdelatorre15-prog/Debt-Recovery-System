@@ -53,6 +53,7 @@ export default {
       if (route === 'POST /api/recovery/goal') return cors(await saveRecoveryGoal(request,env,user),request,env);
       if (route === 'POST /api/recovery/start') return cors(await startRecoveryJourney(request,env,user),request,env);
       if (route === 'GET /api/account/export') return cors(await exportAccount(env,user),request,env);
+      if (route === 'POST /api/account/reset') return cors(await resetFinancialData(request,env,user),request,env);
       if (route === 'POST /api/account/deletion') return cors(await requestAccountDeletion(request,env,user),request,env);
       if (route === 'GET /api/admin/entitlements') return cors(await adminEntitlements(request,env,user),request,env);
       if (route === 'POST /api/admin/entitlements') return cors(await adminSaveEntitlement(request,env,user),request,env);
@@ -476,6 +477,26 @@ async function requestAccountDeletion(request,env,user){
     env.DB.prepare(`UPDATE account_deletion_jobs SET status='completed',completed_at=? WHERE user_id=?`).bind(now,user.id)
   ]);
   return reply({status:'deleted',backupNotice:'Temporary backup copies may remain until backup expiry, normally within 30 days.'});
+}
+
+async function resetFinancialData(request,env,user){
+  const b=await readJson(request);if(String(b.confirmation||'')!=='RESET')return reply({error:'reset_confirmation_required'},400);
+  const now=new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM expected_income WHERE user_id=?`).bind(user.id),
+    env.DB.prepare(`DELETE FROM living_plans WHERE user_id=?`).bind(user.id),
+    env.DB.prepare(`DELETE FROM goals WHERE user_id=?`).bind(user.id),
+    env.DB.prepare(`DELETE FROM recovery_snapshots WHERE user_id=?`).bind(user.id),
+    env.DB.prepare(`DELETE FROM recovery_journeys WHERE user_id=?`).bind(user.id),
+    env.DB.prepare(`DELETE FROM debts WHERE user_id=?`).bind(user.id),
+    env.DB.prepare(`DELETE FROM creditors WHERE user_id=?`).bind(user.id),
+    env.DB.prepare(`DELETE FROM ledger_reversals WHERE user_id=?`).bind(user.id),
+    env.DB.prepare(`DELETE FROM ledger_entries WHERE user_id=?`).bind(user.id),
+    env.DB.prepare(`DELETE FROM allocation_rules WHERE user_id=?`).bind(user.id),
+    env.DB.prepare(`INSERT INTO allocation_rules(id,user_id,effective_from,living_percentage,debt_percentage,savings_percentage,fun_percentage,created_at) VALUES(?,?,?,50,20,30,0,?)`).bind(crypto.randomUUID(),user.id,dateOnly(new Date()),now),
+    env.DB.prepare(`INSERT INTO admin_audit(id,subject_user_id,action,result,detail_json,created_at) VALUES(?,?,?,?,?,?)`).bind(crypto.randomUUID(),user.id,'user_financial_data_reset','success',JSON.stringify({preserved:['user','sessions','entitlements','payment_events']}),now)
+  ]);
+  return reply({status:'reset',preserved:['account','login','access','entitlements','payment records']});
 }
 
 async function paymentWebhook(request,env){
