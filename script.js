@@ -32,7 +32,7 @@ function loadState(){ try { return Object.assign(clone(DEFAULT_STATE),JSON.parse
 function saveState(){ localStorage.setItem('drs-demo-state',JSON.stringify(state)); }
 function currentDebt(){ return openDebts().reduce((sum,d)=>sum+Number(d.balance),0); }
 function openDebts(){ return state.debts.filter(d=>d.status!=='Paid'&&d.status!=='Archived'&&Number(d.balance)>0); }
-function debtRemaining(d){return Math.min(Math.max(Number(d.payment)-Number(d.monthlyPaid||0),0),Number(d.balance));}
+function debtRemaining(d){if(d.status==='Paused')return 0;return Math.min(Math.max(Number(d.payment)-Number(d.monthlyPaid||0),0),Number(d.balance));}
 function billRemaining(b){return b.status==='Paid'?0:Math.max(Number(b.actual)-Number(b.paid||0),0);}
 function dueOnOrBefore(date,end){return Boolean(date&&date<=end);}
 function billDisplayStatus(b){if(b.status==='Paid'||!billRemaining(b))return'Paid';if(b.dueOn&&b.dueOn<TODAY)return'Overdue';if(b.dueOn===TODAY)return'Due today';return b.status==='Needs review'?'Needs review':'Upcoming';}
@@ -82,7 +82,7 @@ function attentionItems(){
 
 function renderDashboard(){
   header('Your financial month','See what needs attention and where your money is going.');
-  const debtDue=openDebts().filter(d=>d.dueDate.startsWith(MONTH)).reduce((s,d)=>s+d.payment,0);
+  const debtDue=openDebts().filter(d=>d.status!=='Paused'&&d.dueDate.startsWith(MONTH)).reduce((s,d)=>s+d.payment,0);
   const paid=Math.abs(activitiesFor('debt').filter(a=>a.type==='payment'&&a.date.startsWith(MONTH)).reduce((s,a)=>s+a.amount,0));
   const monthEnd=`${MONTH}-${String(new Date(Number(MONTH.slice(0,4)),Number(MONTH.slice(5,7)),0).getDate()).padStart(2,'0')}`;
   const unpaidDebt=openDebts().filter(d=>dueOnOrBefore(d.dueDate,monthEnd)).reduce((s,d)=>s+debtRemaining(d),0);
@@ -144,7 +144,7 @@ function renderFundsPage(type){
 }
 
 function renderDebt(){
-  const active=openDebts(),due=active.filter(d=>d.dueDate.startsWith(MONTH)).reduce((s,d)=>s+d.payment,0);
+  const active=openDebts(),due=active.filter(d=>d.status!=='Paused'&&d.dueDate.startsWith(MONTH)).reduce((s,d)=>s+d.payment,0);
   const paid=Math.abs(activitiesFor('debt').filter(a=>a.type==='payment'&&a.date.startsWith(MONTH)).reduce((s,a)=>s+a.amount,0));
   const monthEnd=`${MONTH}-${String(new Date(Number(MONTH.slice(0,4)),Number(MONTH.slice(5,7)),0).getDate()).padStart(2,'0')}`;
   const unpaid=active.filter(d=>dueOnOrBefore(d.dueDate,monthEnd)).reduce((s,d)=>s+debtRemaining(d),0);
