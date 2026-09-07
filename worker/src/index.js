@@ -366,24 +366,25 @@ async function createDebt(request,env,user){
 }
 
 async function debtPayment(request,env,user){
-  const b=await readJson(request),amount=moneyMinor(b.amount),occurred=validDate(b.date),debt=await env.DB.prepare(`SELECT d.*,c.name creditor_name FROM debts d JOIN creditors c ON c.id=d.creditor_id WHERE d.id=? AND d.user_id=? AND d.status IN ('active','paused')`).bind(String(b.debtId||''),user.id).first();
-  if(!debt||amount<=0||!occurred)return reply({error:'invalid_debt_payment'},400);
+  const b=await readJson(request),amount=moneyMinor(b.amount),otherFees=moneyMinor(b.otherFees||0),occurred=validDate(b.date),debt=await env.DB.prepare(`SELECT d.*,c.name creditor_name FROM debts d JOIN creditors c ON c.id=d.creditor_id WHERE d.id=? AND d.user_id=? AND d.status IN ('active','paused')`).bind(String(b.debtId||''),user.id).first();
+  if(!debt||amount<=0||otherFees<0||!occurred)return reply({error:'invalid_debt_payment'},400);
   if(amount>debt.current_balance_minor)return reply({error:'excess_payment_not_allowed',currentBalanceMinor:debt.current_balance_minor},409);
-  const available=await categoryBalance(env,user,'debt'); if(amount>available)return reply({error:'insufficient_debt_funds',availableMinor:available},409);
+  const available=await categoryBalance(env,user,'debt'); if(amount+otherFees>available)return reply({error:'insufficient_debt_funds',availableMinor:available,requiredMinor:amount+otherFees},409);
   const agreement=await env.DB.prepare(`SELECT * FROM debt_agreement_versions WHERE debt_id=? ORDER BY created_at DESC,effective_on DESC LIMIT 1`).bind(debt.id).first();
   const paidSinceAgreement=agreement?Number((await env.DB.prepare(`SELECT COALESCE(SUM(-amount_minor),0) paid_minor FROM ledger_entries WHERE user_id=? AND related_type='debt' AND related_id=? AND entry_type='debt_payment' AND created_at>?`).bind(user.id,debt.id,agreement.created_at).first())?.paid_minor||0):0;
-  const next=debt.current_balance_minor-amount,now=new Date().toISOString(),status=next===0?'paid':debt.status,ledgerId=crypto.randomUUID(),statements=[
-    ledger(env,{id:ledgerId,user,occurred,type:'debt_payment',category:'debt',amount:-amount,relatedType:'debt',relatedId:debt.id,description:`Payment · ${debt.creditor_name}`,key:idempotency(request),now}),
+  const next=debt.current_balance_minor-amount,now=new Date().toISOString(),status=next===0?'paid':debt.status,ledgerId=crypto.randomUUID(),requestKey=idempotency(request),statements=[
+    ledger(env,{id:ledgerId,user,occurred,type:'debt_payment',category:'debt',amount:-amount,relatedType:'debt',relatedId:debt.id,description:`Payment · ${debt.creditor_name}`,key:otherFees?`${requestKey}:principal`:requestKey,now}),
     env.DB.prepare(`INSERT INTO debt_payment_operations(id,debt_id,expected_balance_minor,payment_amount_minor,ledger_entry_id,created_at) VALUES(?,?,?,?,?,?)`).bind(crypto.randomUUID(),debt.id,debt.current_balance_minor,amount,ledgerId,now),
     env.DB.prepare('UPDATE debts SET current_balance_minor=?,status=?,paid_at=?,updated_at=? WHERE id=? AND user_id=? AND current_balance_minor=?').bind(next,status,next===0?occurred:null,now,debt.id,user.id,debt.current_balance_minor),
   ];
+  if(otherFees)statements.push(ledger(env,{id:crypto.randomUUID(),user,occurred,type:'debt_fee',category:'debt',amount:-otherFees,relatedType:'debt',relatedId:debt.id,description:`Payment fee · ${debt.creditor_name}`,key:`${requestKey}:fee`,now}));
   let nextDueDate=null;
   if(next>0&&agreement&&Number(agreement.payment_amount_minor)>0&&paidSinceAgreement+amount>=Number(agreement.payment_amount_minor)){
     const cycles=Math.floor((paidSinceAgreement+amount)/Number(agreement.payment_amount_minor));nextDueDate=advanceDueDate(agreement.due_date,agreement.payment_frequency,cycles);
     statements.push(env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,payment_frequency,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),debt.id,occurred,agreement.payment_amount_minor,nextDueDate,agreement.payment_frequency,agreement.interest_mode,agreement.interest_value,agreement.interest_frequency,agreement.interest_basis,agreement.payment_paused,'agreement','Due date advanced after scheduled payment',now));
   }
   try{await env.DB.batch(statements);}catch(error){if(/UNIQUE|constraint/i.test(String(error.message)))return reply({error:'debt_changed_refresh_and_retry'},409);throw error;}
-  return reply({debtId:debt.id,currentBalanceMinor:next,status,nextDueDate},201);
+  return reply({debtId:debt.id,currentBalanceMinor:next,otherFeesMinor:otherFees,totalDeductedMinor:amount+otherFees,status,nextDueDate},201);
 }
 
 async function updateDebtAgreement(request,env,user){
