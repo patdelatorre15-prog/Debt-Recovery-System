@@ -349,8 +349,8 @@ async function debtHistory(id,env,user){
 }
 
 async function createDebt(request,env,user){
-  const b=await readJson(request),balance=moneyMinor(b.currentBalance),payment=moneyMinor(b.paymentAmount),due=validDate(b.dueDate),creditor=clean(b.creditor,120),mode=interestMode(b.interestMode),frequency=interestFrequency(b.interestFrequency),now=new Date().toISOString();
-  if(!creditor||balance<=0||payment<0||!due||!mode||!frequency)return reply({error:'invalid_debt'},400);
+  const b=await readJson(request),balance=moneyMinor(b.currentBalance),arrangement=paymentFrequency(b.paymentFrequency||'monthly'),payment=arrangement==='one_time'?balance:moneyMinor(b.paymentAmount),due=validDate(b.dueDate),creditor=clean(b.creditor,120),mode=arrangement==='one_time'?'none':interestMode(b.interestMode),frequency=arrangement==='one_time'?'monthly':interestFrequency(b.interestFrequency),now=new Date().toISOString();
+  if(!creditor||balance<=0||payment<=0||!due||!arrangement||!mode||!frequency)return reply({error:'invalid_debt'},400);
   let c=await env.DB.prepare('SELECT id FROM creditors WHERE user_id=? AND lower(name)=lower(?)').bind(user.id,creditor).first();
   if(c&&await env.DB.prepare(`SELECT d.id FROM debts d WHERE d.user_id=? AND d.creditor_id=? AND d.status!='archived' LIMIT 1`).bind(user.id,c.id).first())return reply({error:'duplicate_debt_account'},409);
   const journey=await env.DB.prepare(`SELECT started_on FROM recovery_journeys WHERE user_id=?`).bind(user.id).first();
@@ -359,7 +359,7 @@ async function createDebt(request,env,user){
   if(!c)statements.push(env.DB.prepare('INSERT INTO creditors(id,user_id,name,active,created_at,updated_at) VALUES(?,?,?,?,?,?)').bind(creditorId,user.id,creditor,1,now,now));
   else statements.push(env.DB.prepare('UPDATE creditors SET active=1,updated_at=? WHERE id=? AND user_id=?').bind(now,creditorId,user.id));
   statements.push(env.DB.prepare(`INSERT INTO debts(id,user_id,creditor_id,journey_start_balance_minor,current_balance_minor,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`).bind(debtId,user.id,creditorId,journey?0:balance,balance,b.paused?'paused':'active',now,now));
-  statements.push(env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,payment_frequency,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),debtId,dateOnly(new Date()),payment,due,clean(b.paymentFrequency,20)||'monthly',mode,Number(b.interestValue||0),frequency,clean(b.interestBasis,20)||'remaining',b.paused?1:0,'created',clean(b.notes,1000),now));
+  statements.push(env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,payment_frequency,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),debtId,dateOnly(new Date()),payment,due,arrangement,mode,arrangement==='one_time'?0:Number(b.interestValue||0),frequency,clean(b.interestBasis,20)||'remaining',b.paused?1:0,'created',clean(b.notes,1000),now));
   if(journey)statements.push(env.DB.prepare(`UPDATE recovery_journeys SET no_new_debt_since=?,updated_at=? WHERE user_id=?`).bind(dateOnly(new Date()),now,user.id));
   statements.push(ledger(env,{id:crypto.randomUUID(),user,occurred:dateOnly(new Date()),type:'new_debt',category:'debt_adjustment',amount:balance,relatedType:'debt',relatedId:debtId,description:`New debt · ${creditor}`,key:idempotency(request),now}));
   await env.DB.batch(statements); return reply({id:debtId,currentBalanceMinor:balance},201);
@@ -379,7 +379,7 @@ async function debtPayment(request,env,user){
   ];
   if(otherFees)statements.push(ledger(env,{id:crypto.randomUUID(),user,occurred,type:'debt_fee',category:'debt',amount:-otherFees,relatedType:'debt',relatedId:debt.id,description:`Payment fee · ${debt.creditor_name}`,key:`${requestKey}:fee`,now}));
   let nextDueDate=null;
-  if(next>0&&agreement&&Number(agreement.payment_amount_minor)>0&&paidSinceAgreement+amount>=Number(agreement.payment_amount_minor)){
+  if(next>0&&agreement&&agreement.payment_frequency!=='one_time'&&Number(agreement.payment_amount_minor)>0&&paidSinceAgreement+amount>=Number(agreement.payment_amount_minor)){
     const cycles=Math.floor((paidSinceAgreement+amount)/Number(agreement.payment_amount_minor));nextDueDate=advanceDueDate(agreement.due_date,agreement.payment_frequency,cycles);
     statements.push(env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,payment_frequency,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),debt.id,occurred,agreement.payment_amount_minor,nextDueDate,agreement.payment_frequency,agreement.interest_mode,agreement.interest_value,agreement.interest_frequency,agreement.interest_basis,agreement.payment_paused,'agreement','Due date advanced after scheduled payment',now));
   }
@@ -740,6 +740,7 @@ function calculateRecovery(starting,current,target,correction=0){const comparabl
 function validCategory(v){ return ['living','debt','savings','fun'].includes(v)?v:null; }
 function interestMode(v){ return ['none','included','percentage','fixed'].includes(v)?v:null; }
 function interestFrequency(v){ return ['daily','weekly','monthly'].includes(v)?v:null; }
+function paymentFrequency(v){ return ['one_time','monthly','weekly','daily'].includes(v)?v:null; }
 function validDate(v){ return /^\d{4}-\d{2}-\d{2}$/.test(String(v||''))?String(v):null; }
 function dateOnly(d){ return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(d); }
 function clean(v,max){ return String(v||'').trim().replace(/\s+/g,' ').slice(0,max); }
