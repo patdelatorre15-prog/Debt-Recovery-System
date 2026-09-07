@@ -30,6 +30,7 @@
       'budget-plan':()=>post('/api/living-plans',{name:data.name,planType:'budget',plannedAmount:data.plan}),
       'recovery-goal':()=>post('/api/recovery/goal',{targetBalance:data.targetBalance,targetDate:data.targetDate}),
       'start-journey':()=>post('/api/recovery/start',{date:data.date,targetBalance:data.targetBalance,targetDate:data.targetDate}),
+      'reset-account':()=>post('/api/account/reset',{confirmation:data.confirmation}),
       'delete-account':()=>post('/api/account/deletion',{confirmation:data.confirmation})
     };
     if(!routes[kind])throw new Error('This production action is not connected yet.');return routes[kind]();
