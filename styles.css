@@ -218,6 +218,7 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
 .debt-filters { display:flex; flex-wrap:wrap; gap:9px; margin:0 0 14px; }
 .debt-filter { min-height:34px; padding:7px 13px; border:1px solid var(--line); border-radius:10px; color:var(--ink); background:var(--paper); font-weight:800; cursor:pointer; }
 .debt-filter.active { color:var(--paper); border-color:var(--green); background:var(--green); }
+.debt-filter[data-filter="overdue"].active { border-color:var(--coral); background:var(--coral); }
 .debt-accounts-table { min-width:1040px; }
 .debt-history-link { padding:0; border:0; color:var(--ink); background:none; font:inherit; font-weight:800; text-align:left; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
 .debt-progress { min-width:105px; }
