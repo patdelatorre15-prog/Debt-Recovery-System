@@ -171,6 +171,15 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
 .dashboard-recovery-grid > .card { height:100%; }
 
 .allocation-row { margin-bottom: 14px; }
+.debt-form-grid { gap:16px; }
+.field[hidden],[data-secondary-debt-due][hidden] { display:none !important; }
+.debt-form-section { padding:16px; border:1px solid var(--line); border-radius:14px; background:#f8faf7; }
+.debt-form-section-heading { margin-bottom:14px; }
+.debt-form-section-heading h3 { margin:0; color:var(--navy); font:700 17px var(--serif); }
+.debt-form-section-heading p { margin:3px 0 0; color:var(--muted); font-size:12px; }
+.debt-schedule-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.debt-schedule-grid > [data-recurring-debt-fields] > .field { height:100%; }
+.debt-interest-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
 .recurring-debt-fields { padding:16px; border:1px solid var(--line); border-radius:14px; background:#f4f7f1; }
 .recurring-debt-fields[hidden] { display:none; }
 .forecast-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; }
@@ -374,6 +383,7 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
   .recovery-hero { grid-template-columns: 1fr; }
   .recovery-stat { padding: 12px 0; border-right: 0; border-bottom: 1px solid var(--line); }
   .form-grid { grid-template-columns: 1fr; }
+  .debt-schedule-grid,.debt-interest-grid { grid-template-columns:1fr; }
   .field.full { grid-column: auto; }
   .debt-detail-columns{grid-template-columns:1fr}.debt-detail-row{grid-template-columns:1fr auto}
 }
