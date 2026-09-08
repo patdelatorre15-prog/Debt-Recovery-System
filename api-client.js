@@ -38,7 +38,8 @@
   }
   async function bootstrap(){
     if(!live)return null;
-    const [session,dash,expected,living,goals,debts,recovery,activity]=await Promise.all([request('/api/session'),request('/api/dashboard'),request('/api/expected-income'),request('/api/living-plans'),request('/api/goals'),request('/api/debts'),request('/api/recovery'),request('/api/activity?limit=100')]);
+    const debts=await request('/api/debts');
+    const [session,dash,expected,living,goals,recovery,activity]=await Promise.all([request('/api/session'),request('/api/dashboard'),request('/api/expected-income'),request('/api/living-plans'),request('/api/goals'),request('/api/recovery'),request('/api/activity?limit=100')]);
     const funds={living:0,debt:0,savings:0,fun:0};dash.balances.forEach(x=>{if(x.category in funds)funds[x.category]=Number(x.amount_minor)/100;});
     const activePlans=living.items.filter(x=>Number(x.active)!==0),mappedDebts=debts.items.map(mapDebt),mappedBills=activePlans.filter(x=>x.plan_type==='bill').map(x=>{const actual=Number(x.actual_amount_minor??0)/100,paid=Number(x.paid_amount_minor||0)/100;return {id:x.id,name:x.name,plan:x.planned_amount_minor/100,actual,dueDay:x.due_day,dueOn:x.due_on||'',billingMonth:x.billing_month||'',status:x.bill_instance_id?(x.bill_status==='paid'?'Paid':actual>x.planned_amount_minor/100?'Needs review':x.bill_status==='partially_paid'?'Partially paid':'Upcoming'):'Not recorded',paid};});
     const mappedActivity=activity.items.map(mapActivity),activeEntitlement=session.entitlements.find(x=>x.status==='active'&&x.ends_on>=phDate());
