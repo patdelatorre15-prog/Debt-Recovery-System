@@ -338,7 +338,7 @@ async function reverseLedgerEntry(request,env,user){
 }
 
 async function listDebts(env,user){
-  const result=await env.DB.prepare(`SELECT d.*,c.name creditor_name,(SELECT json_object('effectiveOn',v.effective_on,'paymentAmountMinor',v.payment_amount_minor,'dueDate',v.due_date,'paymentFrequency',v.payment_frequency,'interestMode',v.interest_mode,'interestValue',v.interest_value,'interestFrequency',v.interest_frequency,'interestBasis',v.interest_basis,'paymentPaused',v.payment_paused,'createdAt',v.created_at) FROM debt_agreement_versions v WHERE v.debt_id=d.id ORDER BY v.created_at DESC,v.effective_on DESC LIMIT 1) agreement FROM debts d JOIN creditors c ON c.id=d.creditor_id WHERE d.user_id=? ORDER BY CASE d.status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 WHEN 'paid' THEN 2 WHEN 'archived' THEN 3 ELSE 4 END,c.name`).bind(user.id).all();
+  const result=await env.DB.prepare(`SELECT d.*,c.name creditor_name,(SELECT json_object('effectiveOn',v.effective_on,'paymentAmountMinor',v.payment_amount_minor,'dueDate',v.due_date,'dueDateSecondary',v.due_date_secondary,'paymentFrequency',v.payment_frequency,'interestMode',v.interest_mode,'interestValue',v.interest_value,'interestFrequency',v.interest_frequency,'interestBasis',v.interest_basis,'paymentPaused',v.payment_paused,'createdAt',v.created_at) FROM debt_agreement_versions v WHERE v.debt_id=d.id ORDER BY v.created_at DESC,v.effective_on DESC LIMIT 1) agreement FROM debts d JOIN creditors c ON c.id=d.creditor_id WHERE d.user_id=? ORDER BY CASE d.status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 WHEN 'paid' THEN 2 WHEN 'archived' THEN 3 ELSE 4 END,c.name`).bind(user.id).all();
   return reply({items:result.results.map(x=>({...x,agreement:x.agreement?JSON.parse(x.agreement):null}))});
 }
 
@@ -349,8 +349,8 @@ async function debtHistory(id,env,user){
 }
 
 async function createDebt(request,env,user){
-  const b=await readJson(request),balance=moneyMinor(b.currentBalance),arrangement=paymentFrequency(b.paymentFrequency||'monthly'),payment=arrangement==='one_time'?balance:moneyMinor(b.paymentAmount),due=validDate(b.dueDate),creditor=clean(b.creditor,120),mode=arrangement==='one_time'?'none':interestMode(b.interestMode),frequency=arrangement==='one_time'?'monthly':interestFrequency(b.interestFrequency),now=new Date().toISOString();
-  if(!creditor||balance<=0||payment<=0||!due||!arrangement||!mode||!frequency)return reply({error:'invalid_debt'},400);
+  const b=await readJson(request),balance=moneyMinor(b.currentBalance),arrangement=paymentFrequency(b.paymentFrequency||'monthly'),payment=arrangement==='one_time'?balance:moneyMinor(b.paymentAmount),due=validDate(b.dueDate),dueSecondary=arrangement==='twice_monthly'?validDate(b.dueDateSecondary):null,creditor=clean(b.creditor,120),mode=arrangement==='one_time'?'none':interestMode(b.interestMode),frequency=arrangement==='one_time'?'monthly':interestFrequency(b.interestFrequency),now=new Date().toISOString();
+  if(!creditor||balance<=0||payment<=0||!due||!arrangement||!mode||!frequency||(arrangement==='twice_monthly'&&(!dueSecondary||dueSecondary<=due)))return reply({error:'invalid_debt'},400);
   let c=await env.DB.prepare('SELECT id FROM creditors WHERE user_id=? AND lower(name)=lower(?)').bind(user.id,creditor).first();
   if(c&&await env.DB.prepare(`SELECT d.id FROM debts d WHERE d.user_id=? AND d.creditor_id=? AND d.status!='archived' LIMIT 1`).bind(user.id,c.id).first())return reply({error:'duplicate_debt_account'},409);
   const journey=await env.DB.prepare(`SELECT started_on FROM recovery_journeys WHERE user_id=?`).bind(user.id).first();
@@ -359,7 +359,7 @@ async function createDebt(request,env,user){
   if(!c)statements.push(env.DB.prepare('INSERT INTO creditors(id,user_id,name,active,created_at,updated_at) VALUES(?,?,?,?,?,?)').bind(creditorId,user.id,creditor,1,now,now));
   else statements.push(env.DB.prepare('UPDATE creditors SET active=1,updated_at=? WHERE id=? AND user_id=?').bind(now,creditorId,user.id));
   statements.push(env.DB.prepare(`INSERT INTO debts(id,user_id,creditor_id,journey_start_balance_minor,current_balance_minor,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`).bind(debtId,user.id,creditorId,journey?0:balance,balance,b.paused?'paused':'active',now,now));
-  statements.push(env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,payment_frequency,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),debtId,dateOnly(new Date()),payment,due,arrangement,mode,arrangement==='one_time'?0:Number(b.interestValue||0),frequency,clean(b.interestBasis,20)||'remaining',b.paused?1:0,'created',clean(b.notes,1000),now));
+  statements.push(env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,due_date_secondary,payment_frequency,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),debtId,dateOnly(new Date()),payment,due,dueSecondary,arrangement,mode,arrangement==='one_time'?0:Number(b.interestValue||0),frequency,clean(b.interestBasis,20)||'remaining',b.paused?1:0,'created',clean(b.notes,1000),now));
   if(journey)statements.push(env.DB.prepare(`UPDATE recovery_journeys SET no_new_debt_since=?,updated_at=? WHERE user_id=?`).bind(dateOnly(new Date()),now,user.id));
   statements.push(ledger(env,{id:crypto.randomUUID(),user,occurred:dateOnly(new Date()),type:'new_debt',category:'debt_adjustment',amount:balance,relatedType:'debt',relatedId:debtId,description:`New debt · ${creditor}`,key:idempotency(request),now}));
   await env.DB.batch(statements); return reply({id:debtId,currentBalanceMinor:balance},201);
@@ -380,8 +380,8 @@ async function debtPayment(request,env,user){
   if(otherFees)statements.push(ledger(env,{id:crypto.randomUUID(),user,occurred,type:'debt_fee',category:'debt',amount:-otherFees,relatedType:'debt',relatedId:debt.id,description:`Payment fee · ${debt.creditor_name}`,key:`${requestKey}:fee`,now}));
   let nextDueDate=null;
   if(next>0&&agreement&&agreement.payment_frequency!=='one_time'&&Number(agreement.payment_amount_minor)>0&&paidSinceAgreement+amount>=Number(agreement.payment_amount_minor)){
-    const cycles=Math.floor((paidSinceAgreement+amount)/Number(agreement.payment_amount_minor));nextDueDate=advanceDueDate(agreement.due_date,agreement.payment_frequency,cycles);
-    statements.push(env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,payment_frequency,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),debt.id,occurred,agreement.payment_amount_minor,nextDueDate,agreement.payment_frequency,agreement.interest_mode,agreement.interest_value,agreement.interest_frequency,agreement.interest_basis,agreement.payment_paused,'agreement','Due date advanced after scheduled payment',now));
+    const cycles=Math.floor((paidSinceAgreement+amount)/Number(agreement.payment_amount_minor)),advanced=advanceDebtSchedule(agreement.due_date,agreement.due_date_secondary,agreement.payment_frequency,cycles);nextDueDate=advanced.dueDate;
+    statements.push(env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,due_date_secondary,payment_frequency,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),debt.id,occurred,agreement.payment_amount_minor,nextDueDate,advanced.dueDateSecondary,agreement.payment_frequency,agreement.interest_mode,agreement.interest_value,agreement.interest_frequency,agreement.interest_basis,agreement.payment_paused,'agreement','Due date advanced after scheduled payment',now));
   }
   try{await env.DB.batch(statements);}catch(error){if(/UNIQUE|constraint/i.test(String(error.message)))return reply({error:'debt_changed_refresh_and_retry'},409);throw error;}
   return reply({debtId:debt.id,currentBalanceMinor:next,otherFeesMinor:otherFees,totalDeductedMinor:amount+otherFees,status,nextDueDate},201);
@@ -740,7 +740,7 @@ function calculateRecovery(starting,current,target,correction=0){const comparabl
 function validCategory(v){ return ['living','debt','savings','fun'].includes(v)?v:null; }
 function interestMode(v){ return ['none','included','percentage','fixed'].includes(v)?v:null; }
 function interestFrequency(v){ return ['daily','weekly','monthly'].includes(v)?v:null; }
-function paymentFrequency(v){ return ['one_time','monthly','weekly','daily'].includes(v)?v:null; }
+function paymentFrequency(v){ return ['one_time','monthly','twice_monthly','weekly','daily'].includes(v)?v:null; }
 function validDate(v){ return /^\d{4}-\d{2}-\d{2}$/.test(String(v||''))?String(v):null; }
 function dateOnly(d){ return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(d); }
 function clean(v,max){ return String(v||'').trim().replace(/\s+/g,' ').slice(0,max); }
@@ -767,6 +767,7 @@ function normalizePaymentEvent(p){
 function constantEqual(a,b){a=String(a);b=String(b);let mismatch=a.length^b.length,n=Math.max(a.length,b.length);for(let i=0;i<n;i++)mismatch|=(a.charCodeAt(i%Math.max(a.length,1))||0)^(b.charCodeAt(i%Math.max(b.length,1))||0);return mismatch===0;}
 function addMonths(date,months){const [y,m,d]=date.split('-').map(Number),last=new Date(Date.UTC(y,m-1+months+1,0)).getUTCDate(),out=new Date(Date.UTC(y,m-1+months,Math.min(d,last)));return out.toISOString().slice(0,10);}
 function advanceDueDate(date,frequency,cycles=1){let next=date;for(let i=0;i<cycles;i++){if(frequency==='daily')next=addDays(next,1);else if(frequency==='weekly')next=addDays(next,7);else{const [year,month,day]=next.split('-').map(Number),currentLast=new Date(Date.UTC(year,month,0)).getUTCDate(),nextMonth=month===12?1:month+1,nextYear=month===12?year+1:year,nextLast=new Date(Date.UTC(nextYear,nextMonth,0)).getUTCDate(),nextDay=day===currentLast?nextLast:Math.min(day,nextLast);next=`${nextYear}-${String(nextMonth).padStart(2,'0')}-${String(nextDay).padStart(2,'0')}`;}}return next;}
+function advanceDebtSchedule(dueDate,dueDateSecondary,frequency,cycles=1){let due=dueDate,secondary=dueDateSecondary||null;if(frequency!=='twice_monthly')return {dueDate:advanceDueDate(due,frequency,cycles),dueDateSecondary:secondary};for(let i=0;i<cycles;i++){const previous=due;due=secondary;secondary=advanceDueDate(previous,'monthly',1);}return {dueDate:due,dueDateSecondary:secondary};}
 function shiftMonths(date,months){return addMonths(date,months);}
 function addDays(date,days){const d=new Date(`${date}T00:00:00Z`);d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);}
 function billDueDate(month,day){const [year,number]=String(month).split('-').map(Number),last=new Date(Date.UTC(year,number,0)).getUTCDate();return `${month}-${String(Math.min(Math.max(Number(day)||1,1),last)).padStart(2,'0')}`;}
