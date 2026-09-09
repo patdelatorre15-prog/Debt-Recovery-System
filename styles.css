@@ -220,6 +220,10 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
 .section-heading h3 { margin:0; font-family:var(--serif); font-size:22px; }
 .goal-activity { max-height:330px; overflow:auto; }
 .goal-directory-all { max-width:1180px; margin:0 auto; }
+.goal-status-filters { margin-bottom:14px; }
+.goal-all-table th:nth-child(3),.goal-all-table td:nth-child(3),.goal-all-table th:nth-child(4),.goal-all-table td:nth-child(4) { white-space:nowrap; }
+.goal-modal-progress { min-width:150px; }
+.goal-modal-progress .micro { display:block; margin-top:5px; }
 .goal-sections { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; overflow:hidden; border:1px solid var(--line); border-radius:14px; background:var(--line); }
 .goal-sections.goal-count-1 { grid-template-columns:1fr; }
 .goal-sections.goal-count-2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
