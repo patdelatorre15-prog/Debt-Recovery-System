@@ -3,7 +3,7 @@ const MONTH = TODAY.slice(0,7);
 const NAV = [
   ['dashboard','⌂','Dashboard'],['income','＋','Income'],['living','⌑','Living Expenses'],
   ['savings','◇','Savings'],['fun','☆','Fun'],['debt','▤','Debt'],
-  ['actions','⇄','Actions'],['recovery','↘','Recovery'],['account','○','Account']
+  ['summary','≡','Summary'],['actions','⇄','Actions'],['recovery','↘','Recovery'],['account','○','Account']
 ];
 const DEFAULT_STATE = {
   page:'dashboard',
@@ -69,7 +69,7 @@ function renderNav(){
   $('#navigation').innerHTML=NAV.map(([key,icon,label])=>`<button class="nav-button ${state.page===key?'active':''}" data-page="${key}" ${state.page===key?'aria-current="page"':''}><span class="nav-icon">${icon}</span>${label}</button>`).join('');
 }
 function go(page){ state.page=page; clearNotice(); saveState(); render(); $('#sidebar').classList.remove('open'); window.scrollTo(0,0); }
-function render(){ renderNav(); const views={dashboard:renderDashboard,income:renderIncome,living:renderLiving,savings:()=>renderFundsPage('savings'),fun:()=>renderFundsPage('fun'),debt:renderDebt,actions:renderActions,recovery:renderRecovery,account:renderAccount}; (views[state.page]||renderDashboard)(); }
+function render(){ renderNav(); const views={dashboard:renderDashboard,income:renderIncome,living:renderLiving,savings:()=>renderFundsPage('savings'),fun:()=>renderFundsPage('fun'),debt:renderDebt,summary:renderSummary,actions:renderActions,recovery:renderRecovery,account:renderAccount}; (views[state.page]||renderDashboard)(); }
 
 function activitySection(category,title='Activity'){
   const rows=activitiesFor(category).slice(0,4);
@@ -202,6 +202,24 @@ function debtMetricModal(key){const active=openDebts().filter(d=>d.status!=='Pau
   if(key==='paid'){title='Paid this month';subtitle='Debt payments recorded this month.';const grouped=new Map();activitiesFor('debt').filter(a=>a.type==='payment'&&a.date.startsWith(MONTH)).forEach(a=>{const debt=state.debts.find(d=>d.id===a.relatedId),creditor=debt?.creditor||String(a.title||'Payment').replace(/^Payment(?: made)?\s*[·-]\s*/i,'');const item=grouped.get(creditor)||{creditor,date:a.date,amount:0};item.date=item.date>a.date?item.date:a.date;item.amount+=Math.abs(Number(a.amount));grouped.set(creditor,item);});const items=[...grouped.values()].sort((a,b)=>b.date.localeCompare(a.date)||a.creditor.localeCompare(b.creditor));body=debtSummaryTable([{label:'Creditor / account'},{label:'Last payment date'},{label:'Paid amount',amount:true}],items.map(x=>`<tr><td>${h(x.creditor)}</td><td>${fullDate(x.date)}</td><td class="amount positive">${money(x.amount)}</td></tr>`).join(''),items.reduce((s,x)=>s+x.amount,0),'Total paid this month');}
   if(key==='unpaid'){title='Unpaid this month';subtitle='Overdue installments and unpaid scheduled payments through the end of this month.';const items=debtObligationRows(active,'0000-01-01',monthEnd,true);body=debtSummaryTable([{label:'Creditor / account'},{label:'Due date'},{label:'Amount',amount:true}],items.map(x=>`<tr class="${x.overdue?'summary-overdue':''}"><td>${h(x.creditor)}${x.overdue?' <span class="overdue-text">Overdue</span>':''}</td><td>${fullDate(x.date)}</td><td class="amount">${money(x.amount)}</td></tr>`).join(''),items.reduce((s,x)=>s+x.amount,0),'Total unpaid this month');}
   if(title)openModal({title,subtitle,form:'noop',submit:'Close',fullPage:true,body});
+}
+
+function renderSummary(){
+  const monthStart=`${MONTH}-01`,monthEnd=currentMonthEnd(),activeDebts=openDebts().filter(d=>d.status!=='Paused');
+  const income=state.incomes.filter(x=>x.date.startsWith(MONTH)).reduce((s,x)=>s+Number(x.amount),0);
+  const livingSpent=Math.abs(activitiesFor('living').filter(a=>a.date.startsWith(MONTH)&&['expense','bill'].includes(a.type)).reduce((s,a)=>s+Number(a.amount),0));
+  const debtPaid=Math.abs(activitiesFor('debt').filter(a=>a.date.startsWith(MONTH)&&a.type==='payment').reduce((s,a)=>s+Number(a.amount),0));
+  const savingsUsed=Math.abs(activitiesFor('savings').filter(a=>a.date.startsWith(MONTH)&&a.type==='withdrawal').reduce((s,a)=>s+Number(a.amount),0));
+  const funUsed=Math.abs(activitiesFor('fun').filter(a=>a.date.startsWith(MONTH)&&a.type==='withdrawal').reduce((s,a)=>s+Number(a.amount),0));
+  const outflow=livingSpent+debtPaid+savingsUsed+funUsed,available=Object.values(state.funds).reduce((s,x)=>s+Number(x),0);
+  const billPlanned=state.bills.reduce((s,b)=>s+(Number(b.actual)>0?Number(b.actual):Number(b.plan||0)),0),billPaid=state.bills.reduce((s,b)=>s+Number(b.paid||0),0),billDue=state.bills.reduce((s,b)=>s+billRemaining(b),0);
+  const debtScheduled=activeDebts.reduce((s,d)=>s+debtScheduledBetween(d,monthStart,monthEnd),0),debtDue=activeDebts.reduce((s,d)=>s+debtDueThrough(d,monthEnd),0),totalDue=billDue+debtDue;
+  const savingsReserved=state.goals.savings.reduce((s,g)=>s+Number(g.balance),0),funReserved=state.goals.fun.reduce((s,g)=>s+Number(g.balance),0),achieved=(state.goalAchievements||[]).length;
+  const allocation=`<div class="allocation-summary-grid">${state.allocations.map(x=>`<div class="allocation-summary-item"><div><span>${h(x.name)}</span><b>${Number(x.percentage)}%</b></div><strong>${money(state.funds[x.key])}</strong><small>Available now</small></div>`).join('')}</div>`;
+  const monthFlow=`<div class="breakdown-row"><span>Income received</span><b class="positive">+${money(income)}</b></div><div class="breakdown-row"><span>Living expenses paid / spent</span><b class="negative">${money(-livingSpent)}</b></div><div class="breakdown-row"><span>Debt payments</span><b class="negative">${money(-debtPaid)}</b></div><div class="breakdown-row"><span>Savings funds used</span><b class="negative">${money(-savingsUsed)}</b></div><div class="breakdown-row"><span>Fun funds used</span><b class="negative">${money(-funUsed)}</b></div><div class="breakdown-row total"><span>Recorded cash movement</span><b class="${income-outflow<0?'negative':'positive'}">${income-outflow>0?'+':''}${money(income-outflow)}</b></div>`;
+  const obligations=`<div class="summary-obligation-head"><span>Category</span><span>Scheduled</span><span>Paid</span><span>Still due</span></div><div class="summary-obligation-row"><b>Living Expenses</b><span>${money(billPlanned)}</span><span class="positive">${money(billPaid)}</span><span class="${billDue>0?'negative':''}">${money(billDue)}</span></div><div class="summary-obligation-row"><b>Debt</b><span>${money(debtScheduled)}</span><span class="positive">${money(debtPaid)}</span><span class="${debtDue>0?'negative':''}">${money(debtDue)}</span></div>`;
+  header('Summary',`Your complete financial snapshot for ${new Date(`${MONTH}-01T00:00:00`).toLocaleDateString('en-PH',{month:'long',year:'numeric'})}.`);
+  app.innerHTML=`<div class="metrics">${metric('Income received',money(income),'This month','positive')}${metric('Available funds',money(available),'Across all categories','positive')}${metric('Recorded outflow',money(outflow),'Bills, expenses, debt payments and funds used')}${metric('Still due',money(totalDue),'Bills and debt obligations','negative')}</div>${card('Allocation balances',allocation,'','Available funds after recorded activity')}<div class="grid-2 summary-main-grid">${card('Monthly cash movement',monthFlow,'','External money received versus recorded payments and spending')}${card('Monthly obligations',obligations,'','Current bills and scheduled debt payments')}</div><div class="grid-2 summary-position-grid">${card('Goals position',`<div class="breakdown-row"><span>Savings reserved in goals</span><b>${money(savingsReserved)}</b></div><div class="breakdown-row"><span>Fun reserved in goals</span><b>${money(funReserved)}</b></div><div class="breakdown-row"><span>Goals achieved</span><b>${achieved}</b></div>`)}${card('Debt position',`<div class="breakdown-row"><span>Current debt</span><b>${money(currentDebt())}</b></div><div class="breakdown-row"><span>Active accounts</span><b>${activeDebts.length}</b></div><div class="breakdown-row"><span>Paused accounts</span><b>${openDebts().filter(d=>d.status==='Paused').length}</b></div><div class="breakdown-row"><span>Due through month-end</span><b class="${debtDue>0?'negative':''}">${money(debtDue)}</b></div>`)}</div>`;
 }
 
 function renderActions(){
