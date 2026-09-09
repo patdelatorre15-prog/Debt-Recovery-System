@@ -1,512 +1,495 @@
-:root {
-  --cream: #f7f2e8;
-  --paper: #fffdf8;
-  --paper-soft: #fbf8f0;
-  --ink: #102f2d;
-  --navy: #102645;
-  --green: #116854;
-  --green-2: #1e8067;
-  --sage: #e6eee3;
-  --sage-2: #f1f5ef;
-  --coral: #df6655;
-  --coral-soft: #fff0ec;
-  --gold: #aa772e;
-  --muted: #687872;
-  --line: #dce2da;
-  --shadow: 0 12px 34px rgba(24, 51, 43, .055);
-  --radius: 20px;
+const TODAY = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+const MONTH = TODAY.slice(0,7);
+const NAV = [
+  ['dashboard','⌂','Dashboard'],['income','＋','Income'],['living','⌑','Living Expenses'],
+  ['savings','◇','Savings'],['fun','☆','Fun'],['debt','▤','Debt'],
+  ['summary','≡','Summary'],['actions','⇄','Actions'],['recovery','↘','Recovery'],['account','○','Account']
+];
+const DEFAULT_STATE = {
+  page:'dashboard',
+  allocations:[
+    {key:'living',name:'Living Expenses',percentage:50},
+    {key:'debt',name:'Debt',percentage:20},
+    {key:'savings',name:'Savings',percentage:30},
+    {key:'fun',name:'Fun',percentage:0}
+  ],
+  funds:{living:0,debt:0,savings:0,fun:0}, incomes:[], expected:[], bills:[], budgets:[],
+  goals:{savings:[],fun:[]}, goalAchievements:[], costPlans:[], debts:[], journey:null, recoveryPoints:[], activities:[],
+  transfers:[]
+};
+
+const clone = value => JSON.parse(JSON.stringify(value));
+let state = loadState();
+let debtFilter='';
+let goalFilter='progress';
+let summaryPeriod='monthly',summaryAnchor=MONTH,summaryFrom=`${MONTH}-01`,summaryTo=currentMonthEnd();
+const $ = selector => document.querySelector(selector);
+const app = $('#app');
+const h = value => String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const money = value => `${Number(value||0)<0?'−':''}₱${Math.abs(Number(value||0)).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+const shortDate = value => new Date(value+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'2-digit',year:value.slice(0,4)!=='2026'?'numeric':undefined});
+const fullDate = value => value?new Date(value+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}):'Not recorded';
+const uid = prefix => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function loadState(){ try { return Object.assign(clone(DEFAULT_STATE),JSON.parse(localStorage.getItem('drs-demo-state')||'{}')); } catch { return clone(DEFAULT_STATE); } }
+function saveState(){ localStorage.setItem('drs-demo-state',JSON.stringify(state)); }
+function currentDebt(){ return openDebts().reduce((sum,d)=>sum+Number(d.balance),0); }
+function openDebts(){ return state.debts.filter(d=>d.status!=='Paid'&&d.status!=='Archived'&&Number(d.balance)>0); }
+function debtScheduleDates(d,from,through,limit=400){if(d.status==='Paused'||!d.dueDate||!(Number(d.payment)>0)||!through)return[];const dates=[];let due=d.dueDate,secondary=d.dueDateSecondary||'';for(let i=0;due&&due<=through&&i<limit;i++){if(due>=from)dates.push(due);if(d.paymentFrequency==='one_time')break;if(d.paymentFrequency==='twice_monthly'){const previous=due;due=secondary;secondary=advanceProjectionDate(previous,'monthly');}else due=advanceProjectionDate(due,d.paymentFrequency||'monthly');}return dates;}
+function debtScheduledBetween(d,from,through){const scheduled=debtScheduleDates(d,from,through).length*Number(d.payment||0);return Math.min(Math.max(scheduled,0),Number(d.balance||0));}
+function debtDueThrough(d,through){const scheduled=debtScheduledBetween(d,'0000-01-01',through)-Number(d.monthlyPaid||0)-Number(d.advanceCredit||0);return Math.min(Math.max(scheduled,0),Number(d.balance||0));}
+function debtRemaining(d){return debtDueThrough(d,d.dueDate);}
+function currentMonthEnd(){return `${MONTH}-${String(new Date(Number(MONTH.slice(0,4)),Number(MONTH.slice(5,7)),0).getDate()).padStart(2,'0')}`;}
+function debtTableScheduled(d){return debtScheduledBetween(d,`${MONTH}-01`,currentMonthEnd());}
+function debtTableRemaining(d){const timing=debtTiming(d);return timing==='overdue'?debtDueThrough(d,TODAY):timing==='month'?debtDueThrough(d,currentMonthEnd()):debtRemaining(d);}
+function billRemaining(b){const obligation=Number(b.actual)>0?Number(b.actual):Number(b.plan||0);return b.status==='Paid'?0:Math.max(obligation-Number(b.paid||0),0);}
+function billEffectiveDueOn(b){if(b.dueOn)return b.dueOn;const day=Math.min(Math.max(Number(b.dueDay)||1,1),new Date(Number(MONTH.slice(0,4)),Number(MONTH.slice(5,7)),0).getDate());return `${MONTH}-${String(day).padStart(2,'0')}`;}
+function dueOnOrBefore(date,end){return Boolean(date&&date<=end);}
+function billDisplayStatus(b){if(b.status==='Paid')return'Paid';const due=billEffectiveDueOn(b);if(due<TODAY)return'Overdue';if(due===TODAY)return'Due today';return b.status==='Needs review'?'Needs review':b.status==='Partially paid'?'Partially paid':'Upcoming';}
+function billUrgency(b){const status=billDisplayStatus(b);return status==='Overdue'?0:status==='Due today'?1:status==='Paid'?3:2;}
+function debtTiming(d){
+  if(d.status==='Paid'||d.status==='Archived'||Number(d.balance)<=0)return 'paid';
+  if(d.status==='Paused'||!d.dueDate||Number(d.payment)<=0||d.paymentFrequency==='flexible')return 'upcoming';
+  if(d.dueDate<TODAY)return 'overdue';
+  if(d.dueDate===TODAY)return 'today';
+  if(d.dueDate?.slice(0,7)===MONTH)return 'month';
+  return 'upcoming';
+}
+function activitiesFor(category){ return state.activities.filter(a=>!category||a.category===category).sort((a,b)=>b.date.localeCompare(a.date)); }
+function addActivity(category,type,title,detail,amount,date=TODAY,relatedId=''){ state.activities.unshift({id:uid('a'),date,category,type,title,detail,amount:Number(amount),relatedId}); }
+function header(title,subtitle,actions=''){ $('#pageTitle').textContent=title; $('#pageSubtitle').textContent=subtitle; $('#pageActions').innerHTML=actions; }
+function button(label,action,kind='button'){ return `<button type="button" class="${kind}" data-action="${action}">${label}</button>`; }
+function card(title,body,action='',subtitle=''){ return `<section class="card"><div class="card-header"><div><h2>${h(title)}</h2>${subtitle?`<p>${h(subtitle)}</p>`:''}</div>${action}</div>${body}</section>`; }
+function metric(label,value,note='',tone=''){ return `<div class="metric"><span class="metric-label">${label}</span><strong class="metric-value ${tone}">${value}</strong>${note?`<span class="metric-note">${note}</span>`:''}</div>`; }
+function metricButton(label,value,note,tone,key){return `<button type="button" class="metric metric-button" data-action="debt-metric" data-id="${h(key)}" aria-label="View ${h(label)} details"><span class="metric-label">${h(label)}</span><strong class="metric-value ${tone}">${value}</strong>${note?`<span class="metric-note">${h(note)}</span>`:''}</button>`;}
+function track(value,max,tone=''){ const pct=max>0?Math.min(100,Math.max(0,value/max*100)):0; return `<div class="track ${tone}"><i style="width:${pct}%"></i></div>`; }
+function pill(text,tone=''){ return `<span class="pill ${tone}">${h(text)}</span>`; }
+function notice(message,error=false){ $('#noticeRegion').innerHTML=`<div class="notice ${error?'error':''}"><span>${message}</span><button aria-label="Dismiss" onclick="this.parentElement.remove()">×</button></div>`; window.scrollTo({top:0,behavior:'smooth'}); }
+function clearNotice(){ $('#noticeRegion').innerHTML=''; }
+
+function renderNav(){
+  $('#navigation').innerHTML=NAV.map(([key,icon,label])=>`<button class="nav-button ${state.page===key?'active':''}" data-page="${key}" ${state.page===key?'aria-current="page"':''}><span class="nav-icon">${icon}</span>${label}</button>`).join('');
+}
+function go(page){ state.page=page; clearNotice(); saveState(); render(); $('#sidebar').classList.remove('open'); window.scrollTo(0,0); }
+function render(){ renderNav(); const views={dashboard:renderDashboard,income:renderIncome,living:renderLiving,savings:()=>renderFundsPage('savings'),fun:()=>renderFundsPage('fun'),debt:renderDebt,summary:renderSummary,actions:renderActions,recovery:renderRecovery,account:renderAccount}; (views[state.page]||renderDashboard)(); }
+
+function activitySection(category,title='Activity'){
+  const rows=activitiesFor(category).slice(0,4);
+  return card(title,`<div class="activity-list">${rows.length?rows.map(a=>activityRow(a,true)).join(''):`<div class="empty">No activity recorded yet.</div>`}</div>`,`<button class="link-button" data-action="view-activity" data-category="${category||''}">View all →</button>`);
+}
+function activityRow(a,allowDelete=false){
+  const isPayment=a.type==='payment',isBad=['interest','new-debt','expense','bill','withdrawal','fee'].includes(a.type),isWarning=['correction','reversal'].includes(a.type),sign=a.amount>0?'+':'';
+  const canDelete=allowDelete&&a.reversible&&!a.reversed&&!a.isReversal;
+  const tone=isPayment?'positive':isBad||a.amount<0?'negative':a.amount>0?'positive':'';
+  return `<div class="activity-row ${allowDelete?'deletable':''}"><span class="date">${shortDate(a.date)}</span><span class="activity-icon ${isBad?'bad':isWarning?'warn':''}" aria-hidden="true">${a.amount<0?'↓':'↑'}</span><div><span class="row-title">${h(a.title||`${labelFor(a.category)} entry`)}</span><span class="row-subtitle">${h(a.detail||'Recorded in your financial ledger')}</span></div><span class="amount ${tone}">${sign}${money(a.amount)}</span>${allowDelete?`<span class="activity-action">${canDelete?`<button type="button" class="button-ghost negative" data-action="delete-ledger" data-id="${h(a.id)}">Delete</button>`:''}</span>`:''}</div>`;
 }
 
-.admin-shell{max-width:1120px;margin:0 auto;padding:52px 28px 80px}.admin-shell .page-head{margin-bottom:28px}.section-card{margin-bottom:20px}.section-title{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin-bottom:18px}.section-title h2{margin:0}.section-title p{margin:5px 0 0;color:var(--muted)}.muted{color:var(--muted);font-size:13px}.inline-form{display:flex;gap:10px;align-items:center}.inline-form input{min-width:240px}.full-field{grid-column:1/-1}.notice.error{background:#fff0ec;color:#a83f31;border-color:#eeb7ab}.table-wrap{overflow:auto}.table-wrap table{width:100%;border-collapse:collapse}.table-wrap th,.table-wrap td{text-align:left;padding:14px 12px;border-bottom:1px solid var(--line);white-space:nowrap}.table-wrap th{font-size:.76rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-.admin-shell .form-grid>label{display:grid;gap:7px;color:var(--ink);font-size:12px;font-weight:760}.admin-shell input,.admin-shell select{width:100%;min-height:43px;padding:10px 12px;border:1px solid #cfd8cf;border-radius:10px;color:var(--ink);background:#fff}.admin-shell small{display:block;margin-top:3px;color:var(--muted);font-size:12px}.admin-audit-row{grid-template-columns:minmax(260px,1fr) 120px 120px!important}.admin-attention-row{grid-template-columns:minmax(260px,1fr) 150px 110px auto!important}.admin-audit-row>div,.admin-attention-row>div{min-width:0}.admin-audit-row strong,.admin-attention-row strong{display:block;overflow-wrap:anywhere}.admin-audit-row time{color:var(--muted);white-space:nowrap}
-.auth-overlay{position:fixed;inset:0;z-index:100;background:var(--cream);display:grid;place-items:center;padding:24px}.auth-card{width:min(440px,100%);padding:38px;background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}.auth-card h1{margin:8px 0 12px}.auth-card p:not(.eyebrow){color:var(--muted);margin-bottom:24px}
-.auth-license{display:block;margin:0 0 18px;font-weight:700}.auth-license span{font-weight:400;color:var(--muted)}.auth-license input{display:block;width:100%;margin-top:7px}
-@media(max-width:760px){.admin-shell{padding:28px 16px 60px}.admin-shell .section-title{flex-direction:column}.inline-form{align-items:stretch;flex-direction:column;width:100%}.inline-form input{min-width:0;width:100%}.admin-audit-row{grid-template-columns:1fr auto!important}.admin-audit-row>:nth-child(3){display:none!important}.admin-attention-row{grid-template-columns:1fr auto!important}.admin-attention-row>:nth-child(2),.admin-attention-row>:nth-child(3){display:none!important}}
-
-* { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
-body {
-  margin: 0;
-  min-height: 100vh;
-  background: var(--cream);
-  color: var(--ink);
-  font: 15px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-button, input, select, textarea { font: inherit; }
-button { cursor: pointer; }
-
-.sidebar {
-  position: fixed;
-  inset: 0 auto 0 0;
-  width: 248px;
-  padding: 30px 20px 22px;
-  display: flex;
-  flex-direction: column;
-  background: #f0f4ed;
-  border-right: 1px solid var(--line);
-  z-index: 20;
-}
-.brand { display: flex; align-items: center; gap: 12px; padding: 0 9px 24px; }
-.brand-mark {
-  width: 42px; height: 42px; display: grid; place-items: center;
-  border-radius: 12px; color: white; background: var(--green);
-  font: 700 15px Georgia, serif; letter-spacing: .04em;
-}
-.brand strong { display: block; color: var(--navy); font: 700 16px Georgia, serif; }
-.brand small, .sidebar-note small { display: block; color: var(--muted); margin-top: 2px; font-size: 12px; }
-nav { display: grid; gap: 5px; }
-.nav-button {
-  width: 100%; border: 0; border-radius: 12px; padding: 11px 13px;
-  display: flex; gap: 11px; align-items: center; text-align: left;
-  color: #39534d; background: transparent; font-weight: 650;
-}
-.nav-button:hover { background: rgba(255,255,255,.65); }
-.nav-button.active { color: white; background: var(--green); box-shadow: 0 8px 18px rgba(17,104,84,.18); }
-.nav-icon { width: 20px; text-align: center; font-size: 15px; }
-.sidebar-note {
-  margin-top: auto; padding: 13px; display: flex; gap: 10px; align-items: center;
-  border: 1px solid #d4dfd4; border-radius: 14px; background: rgba(255,255,255,.55); font-size: 12px;
-}
-.status-dot { width: 9px; height: 9px; border-radius: 50%; background: #3f9b6a; box-shadow: 0 0 0 4px #dbeade; }
-
-.main-shell { margin-left: 248px; padding: 42px clamp(24px, 4vw, 62px) 70px; }
-.page-header { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin: 0 auto 28px; max-width: 1320px; }
-.eyebrow { margin: 0 0 12px; color: var(--green); font-size: 11px; font-weight: 800; letter-spacing: .17em; }
-h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; color: var(--navy); }
-h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spacing: -.025em; }
-.page-subtitle { margin: 13px 0 0; color: var(--muted); font-size: 16px; }
-.page-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; }
-#app, #noticeRegion { max-width: 1320px; margin: 0 auto; }
-.mobile-bar { display: none; }
-
-.button, .button-secondary, .button-ghost, .icon-button {
-  min-height: 43px; padding: 10px 16px; border-radius: 11px; border: 1px solid transparent;
-  font-weight: 750; transition: transform .15s, background .15s, border-color .15s;
-}
-.button:hover, .button-secondary:hover, .button-ghost:hover { transform: translateY(-1px); }
-.button { color: white; background: var(--green); }
-.button-secondary { color: var(--green); background: var(--paper); border-color: #cbd8cf; }
-.button-ghost { color: var(--green); background: transparent; padding-inline: 10px; }
-.button-danger { color: white; background: var(--coral); }
-.link-button { border: 0; padding: 0; color: var(--green); background: transparent; font-weight: 750; }
-
-.metrics { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; margin-bottom: 18px; }
-.metrics.five { grid-template-columns: repeat(5, minmax(0,1fr)); }
-.metric, .card {
-  border: 1px solid var(--line); background: var(--paper); border-radius: var(--radius); box-shadow: var(--shadow);
-}
-.metric { padding: 19px 20px; }
-.metric-button { width:100%; color:inherit; text-align:left; cursor:pointer; }
-.metric-button:hover { border-color:#bdcec4; box-shadow:0 15px 34px rgba(24,51,43,.1); transform:translateY(-1px); }
-.metric-button:focus-visible { outline:3px solid rgba(30,128,103,.25); outline-offset:2px; }
-.metric-label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 7px; }
-.metric-value { display: block; color: var(--navy); font: 700 clamp(21px, 2vw, 29px) Georgia, serif; line-height: 1.15; }
-.metric-note { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
-.positive { color: var(--green) !important; }
-.negative { color: var(--coral) !important; }
-.gold { color: var(--gold) !important; }
-
-.grid-2 { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; margin-bottom: 18px; }
-.grid-3 { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; margin-bottom: 18px; }
-.split-wide { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(330px,.65fr); gap: 18px; margin-bottom: 18px; }
-.debt-lower-grid { align-items: stretch; }
-.debt-lower-grid > .card { height: 100%; }
-.almost-done-head, .almost-done-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 16px; }
-.almost-done-head { padding: 0 0 10px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-.almost-done-head span:nth-child(2) { text-align: right; }
-.almost-done-row { min-height: 58px; padding: 10px 0; border-top: 1px solid var(--line); }
-.almost-done-row .amount { white-space: nowrap; }
-.summary-controls { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
-.summary-controls select, .summary-period-input, .summary-custom-dates input { min-height:42px; padding:8px 11px; border:1px solid #cbd8cf; border-radius:11px; color:var(--ink); background:var(--paper); }
-.summary-period-input[type="number"] { width:105px; }
-.summary-arrow { width:42px; height:42px; padding:0; border:1px solid #cbd8cf; border-radius:50%; color:var(--green); background:var(--paper); font-weight:800; }
-.summary-custom-dates { display:flex; align-items:center; gap:8px; color:var(--muted); }
-.summary-period-label { margin:-7px 0 14px; color:var(--muted); font-size:13px; font-weight:700; }
-.summary-chart-layout { min-height:190px; display:flex; align-items:center; justify-content:center; gap:34px; }
-.summary-donut { width:132px; aspect-ratio:1; padding:25px; border-radius:50%; flex:0 0 auto; }
-.summary-donut span { display:block; width:100%; height:100%; border-radius:50%; background:var(--paper); }
-.summary-legend { width:min(250px,100%); display:grid; gap:11px; }
-.summary-legend > div, .summary-outflow-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:9px; }
-.summary-legend i, .summary-outflow-row i { width:9px; height:9px; display:inline-block; border-radius:50%; }
-.summary-legend span { font-size:13px; }
-.summary-outflow-row { min-height:42px; border-bottom:1px solid var(--line); }
-.summary-outflow-row span { display:flex; align-items:center; gap:9px; }
-.summary-outflow-row.total { padding-top:7px; border-bottom:0; color:var(--navy); font-weight:800; }
-.card { padding: 24px; margin-bottom: 18px; }
-.grid-2 > .card, .grid-3 > .card, .split-wide > .card { margin-bottom: 0; }
-.card-header { display: flex; align-items: start; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
-.card-header h2, .section-heading h2 { margin: 0; font-size: 24px; letter-spacing: -.01em; }
-.card-header p, .section-heading p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
-.section-heading { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin: 25px 0 14px; }
-.section-heading:first-child { margin-top: 0; }
-
-.list { border-top: 1px solid var(--line); }
-.list-row {
-  display: grid; grid-template-columns: 92px minmax(210px,1.4fr) minmax(130px,.8fr) minmax(120px,.65fr) auto;
-  gap: 15px; align-items: center; padding: 15px 0; border-bottom: 1px solid var(--line);
-}
-.list-row:last-child { border-bottom: 0; }
-.list-row.compact { grid-template-columns: 85px minmax(180px,1.4fr) minmax(120px,.75fr) auto; }
-.row-title { display: block; color: var(--ink); font-weight: 780; }
-.row-subtitle, .date, .micro { display: block; color: var(--muted); font-size: 13px; margin-top: 3px; }
-.amount { text-align: right; white-space: nowrap; font-weight: 800; color: var(--navy); }
-.row-actions { display: flex; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
-.pill { display: inline-flex; width: fit-content; align-items: center; padding: 6px 9px; border-radius: 999px; background: var(--sage); color: var(--green); font-size: 11px; font-weight: 750; }
-.pill.bad { background: var(--coral-soft); color: var(--coral); }
-.pill.gold { background: #f6edd9; color: #8a6429 !important; }
-
-.attention-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 28px; border-top: 1px solid #efd3cc; }
-.attention-item { display: grid; grid-template-columns: 112px 1fr auto; gap: 14px; align-items: center; min-height: 70px; border-bottom: 1px solid #efd3cc; }
-.attention-code { color: var(--coral); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
-.attention-item .amount { color: var(--coral); }
-.attention-item { width:100%; border-top:0; border-right:0; border-left:0; text-align:left; background:transparent; color:inherit; }
-.attention-separator { border-left: 1px solid #efd3cc; padding-left: 28px; }
-.attention-detail-list { border-top:1px solid #efd3cc; }
-.attention-detail { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:18px; align-items:center; padding:16px 0; border-bottom:1px solid #efd3cc; }
-.cost-table { display:grid; gap:10px; margin-bottom:14px; }
-.cost-row { display:grid; grid-template-columns:100px minmax(150px,1.3fr) 130px 90px 150px 110px; gap:10px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--paper-soft); }
-.cost-row.budget-plan-row { grid-template-columns:minmax(220px,1fr) 180px 130px; }
-.cost-row.bill-plan-row { grid-template-columns:minmax(170px,1fr) 120px 90px 105px 145px 110px; }
-.cost-row label { display:grid; gap:5px; color:var(--muted); font-size:11px; font-weight:700; }
-.cost-row input,.cost-row select { width:100%; min-width:0; padding:9px; border:1px solid #cfd8cf; border-radius:8px; background:white; }
-.transfer-preview { padding:13px; border-radius:11px; background:var(--sage-2); color:var(--muted); line-height:1.55; }
-.account-actions { justify-content:flex-start; margin-top:18px; }
-.activity-icon.warn { color:#8a6429; background:#f6edd9; }
-.admin-pending .admin-shell { visibility:hidden; }
-
-.income-hero { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; margin-bottom:18px; }
-.income-hero-item { min-height:150px; display:flex; align-items:center; gap:16px; padding:24px; border:1px solid var(--line); border-radius:var(--radius); background:var(--paper); box-shadow:var(--shadow); }
-.income-hero-icon { flex:0 0 38px; width:38px; height:38px; display:grid; place-items:center; border-radius:50%; color:var(--green); background:var(--sage); font-weight:800; }
-.income-hero-item.expected .income-hero-icon { color:#b36a31; background:#fff0dc; }
-.income-hero-item > div { min-width:0; flex:1; }
-.next-expected { display:grid; gap:2px; margin-top:13px; padding-top:10px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
-.next-expected b { color:var(--navy); }
-.allocation-summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border:1px solid var(--line); border-radius:13px; overflow:hidden; }
-.allocation-summary-item { min-width:0; padding:14px; border-right:1px solid var(--line); }
-.allocation-summary-item:last-child { border-right:0; }
-.allocation-summary-item > div { display:flex; justify-content:space-between; gap:8px; color:var(--muted); font-size:12px; }
-.allocation-summary-item > div b { color:var(--green); }
-.allocation-summary-item > strong { display:block; margin-top:9px; color:var(--navy); font:700 18px Georgia,serif; }
-.allocation-summary-item > small { display:block; margin-top:3px; color:var(--muted); }
-.expected-income-row { display:grid; grid-template-columns:85px minmax(220px,1fr) auto 125px minmax(250px,auto); gap:14px; align-items:center; padding:15px 0; border-bottom:1px solid var(--line); }
-.expected-income-row:last-child { border-bottom:0; }
-.expected-income-actions { display:flex; justify-content:flex-end; align-items:center; gap:7px; flex-wrap:wrap; min-width:0; }
-.expected-income-actions button { white-space:nowrap; }
-.income-lower .list-row.compact { grid-template-columns:70px minmax(0,1fr) auto auto; }
-.income-lower .activity-row { grid-template-columns:65px 32px minmax(0,1fr) 105px; }
-.dashboard-recovery-grid > .card { height:100%; }
-
-.allocation-row { margin-bottom: 14px; }
-.debt-form-grid { gap:16px; }
-.field[hidden],[data-secondary-debt-due][hidden] { display:none !important; }
-.debt-form-section { padding:16px; border:1px solid var(--line); border-radius:14px; background:#f8faf7; }
-.debt-form-section-heading { margin-bottom:14px; }
-.debt-form-section-heading h3 { margin:0; color:var(--navy); font:700 17px var(--serif); }
-.debt-form-section-heading p { margin:3px 0 0; color:var(--muted); font-size:12px; }
-.debt-schedule-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
-.debt-schedule-grid > [data-recurring-debt-fields] > .field { height:100%; }
-.debt-interest-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
-.recurring-debt-fields { padding:16px; border:1px solid var(--line); border-radius:14px; background:#f4f7f1; }
-.recurring-debt-fields[hidden] { display:none; }
-.forecast-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; }
-.forecast-grid .metric { min-width:0; }
-.loading-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
-.loading-card { height:180px; border-radius:22px; background:linear-gradient(100deg,#edf1ea 20%,#f8faf7 40%,#edf1ea 60%); background-size:220% 100%; animation:drs-loading 1.25s infinite; }
-.loading-card.wide { grid-column:1/-1; height:240px; }
-@keyframes drs-loading { to { background-position:-220% 0; } }
-.allocation-row > div:first-child { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; margin-bottom: 6px; }
-.track { height: 7px; overflow: hidden; border-radius: 99px; background: #e4e9e1; }
-.track > i { display: block; height: 100%; background: var(--green); border-radius: inherit; }
-.track.coral > i { background: var(--coral); }
-
-.activity-list { border-top: 1px solid var(--line); }
-.activity-row { display: grid; grid-template-columns: 82px 36px minmax(220px,1fr) 130px; gap: 12px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--line); }
-.activity-row.deletable { grid-template-columns:82px 36px minmax(220px,1fr) 120px auto; }
-.activity-row > .amount { justify-self:end; white-space:nowrap; }
-.activity-row:last-child { border-bottom: 0; }
-.activity-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: var(--green); background: var(--sage); font-weight: 800; }
-.activity-icon.bad { color: var(--coral); background: var(--coral-soft); }
-.activity-tag { justify-self: end; }
-.activity-action { min-width:58px; justify-self:end; }
-
-.goal-list { border-top: 1px solid var(--line); }
-.goal-row { display: grid; grid-template-columns: minmax(220px,1.4fr) minmax(180px,.8fr) 125px auto; gap: 16px; align-items: center; padding: 17px 0; border-bottom: 1px solid var(--line); }
-.goal-link { display:block; padding:0; border:0; color:var(--ink); background:none; font:inherit; font-weight:800; text-align:left; text-decoration:underline; text-decoration-color:transparent; text-underline-offset:3px; cursor:pointer; }
-.goal-link:hover,.goal-link:focus-visible { color:var(--green); text-decoration-color:currentColor; }
-.card-actions { display:flex; align-items:center; justify-content:flex-end; gap:14px; }
-.goal-balance { text-align: right; }
-.goal-detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 28px; margin-bottom:18px; border-top:1px solid var(--line); }
-.goal-detail-grid > div { display:flex; justify-content:space-between; gap:20px; padding:14px 0; border-bottom:1px solid var(--line); }
-.goal-detail-grid span { color:var(--muted); }
-.goal-detail-progress { margin:4px 0 24px; }
-.section-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:18px; }
-.section-heading h3 { margin:0; font-family:var(--serif); font-size:22px; }
-.goal-activity { max-height:330px; overflow:auto; }
-.goal-directory-all { max-width:1180px; margin:0 auto; }
-.goal-status-filters { margin-bottom:14px; }
-.goal-all-table th:nth-child(3),.goal-all-table td:nth-child(3),.goal-all-table th:nth-child(4),.goal-all-table td:nth-child(4) { white-space:nowrap; }
-.goal-modal-progress { min-width:150px; }
-.goal-modal-progress .micro { display:block; margin-top:5px; }
-.goal-sections { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; overflow:hidden; border:1px solid var(--line); border-radius:14px; background:var(--line); }
-.goal-sections.goal-count-1 { grid-template-columns:1fr; }
-.goal-sections.goal-count-2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
-.goal-sections.goal-count-3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
-.goal-section { display:flex; min-width:0; min-height:190px; padding:18px 20px; flex-direction:column; background:var(--surface); }
-.goal-section-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; min-height:42px; }
-.goal-section-head .goal-link { line-height:1.25; }
-.goal-section-head > b { flex:0 0 auto; color:var(--green); font-size:12px; }
-.goal-section .row-subtitle { min-height:0; margin-bottom:12px; }
-.goal-section-amount { display:block; margin:5px 0 3px; color:var(--ink); font-family:var(--serif); font-size:27px; }
-.goal-section-actions { display:flex; align-items:center; gap:8px; margin-top:auto; padding-top:18px; }
-.goal-section-actions .button-secondary,.goal-section-actions .button-ghost { min-height:38px; padding:8px 13px; }
-.funds-history-grid { margin-top:20px; align-items:start; }
-.achievement-head,.achievement-row { display:grid; grid-template-columns:minmax(130px,1fr) minmax(95px,.55fr) minmax(110px,.65fr); gap:14px; align-items:center; }
-.achievement-head { padding:10px 0; color:var(--muted); font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; border-bottom:1px solid var(--line); }
-.achievement-row { padding:15px 0; border-bottom:1px solid var(--line); }
-.achievement-row:last-child { border-bottom:0; }
-.fund-pool { padding: 25px; border-radius: var(--radius); border: 1px solid #d5e3d5; background: linear-gradient(135deg,#fbfdf9,#eaf3e7); }
-.fund-pool .metric-value { margin-top: 16px; font-size: 36px; }
-
-.debt-table { width: 100%; border-collapse: collapse; }
-.debt-table th { padding: 10px 12px; color: var(--muted); font-size: 11px; text-align: left; border-bottom: 1px solid var(--line); }
-.debt-table td { padding: 15px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
-.debt-table td.amount, .debt-table th.amount { text-align: right; }
-.debt-table tr:last-child td { border-bottom: 0; }
-.debt-name { font-weight: 800; }
-.debt-filters { display:flex; flex-wrap:wrap; gap:9px; margin:0 0 14px; }
-.debt-filter { min-height:34px; padding:7px 13px; border:1px solid var(--line); border-radius:10px; color:var(--ink); background:var(--paper); font-weight:800; cursor:pointer; }
-.debt-filter.active { color:var(--paper); border-color:var(--green); background:var(--green); }
-.debt-filter[data-filter="overdue"].active { border-color:var(--coral); background:var(--coral); }
-.debt-accounts-table { min-width:1040px; }
-.debt-history-link { padding:0; border:0; color:var(--ink); background:none; font:inherit; font-weight:800; text-align:left; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
-.debt-progress { min-width:105px; }
-.debt-progress small { display:block; margin-top:5px; color:var(--muted); }
-.compact-button { min-height:36px; padding:7px 13px; }
-.debt-board { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
-.debt-column { min-width:0; padding:14px; border:1px solid var(--line); border-radius:14px; background:var(--paper-soft); }
-.debt-column > h3,.paid-debts > h3 { display:flex; justify-content:space-between; gap:10px; margin:0 0 12px; font-family:var(--serif); font-size:18px; }
-.debt-column > h3 span { display:grid; place-items:center; min-width:25px; height:25px; border-radius:99px; color:var(--green); background:var(--sage); font-family:var(--sans); font-size:12px; }
-.debt-column.overdue > h3 span { color:var(--coral); background:var(--coral-soft); }
-.debt-column-empty { margin:0; padding:22px 6px; color:var(--muted); text-align:center; font-size:12px; }
-.debt-account-card { display:grid; gap:12px; padding:14px 0; border-bottom:1px solid var(--line); }
-.debt-account-card:first-child { padding-top:0; }
-.debt-account-card:last-child { padding-bottom:0; border-bottom:0; }
-.debt-card-figures { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
-.debt-card-figures span { min-width:0; }
-.debt-card-figures small,.debt-card-figures b { display:block; }
-.debt-card-figures small { color:var(--muted); font-size:10px; }
-.debt-card-figures b { margin-top:2px; font-size:13px; white-space:nowrap; }
-.debt-account-card .row-actions { justify-content:flex-start; flex-wrap:wrap; }
-.debt-special-section { margin-top:24px; padding:20px; border:1px solid var(--line); border-radius:16px; background:#f4f7f1; }
-.paused-debts { background:#faf7ef; border-color:#e2d9c4; }
-.paid-debts-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:14px; }
-.paid-debts-heading h3 { margin:0; font-family:var(--serif); font-size:20px; color:var(--navy); }
-.paid-debts-heading p { margin:4px 0 0; color:var(--muted); font-size:13px; }
-.paid-debts-count { display:grid; place-items:center; min-width:32px; height:32px; padding:0 10px; border-radius:999px; background:var(--sage); color:var(--green); font-weight:800; }
-.paid-debts .debt-account-card { grid-template-columns:minmax(180px,1fr) minmax(300px,2fr) auto; align-items:center; }
-
-.recovery-hero { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 0; }
-.recovery-stat { min-width:0; padding: 4px clamp(10px,1.5vw,22px); border-right: 1px solid var(--line); }
-.recovery-stat:first-child { padding-left: 0; }
-.recovery-stat:last-child { border-right: 0; }
-.recovery-stat .metric-value { margin-top: 6px; white-space:nowrap; font-size:clamp(21px,2.1vw,34px); }
-.dashboard-recovery-grid .recovery-stat .metric-value { font-size:clamp(18px,1.7vw,29px); }
-.dashboard-recovery-grid .recovery-hero { grid-template-columns:repeat(2,minmax(0,1fr)); row-gap:16px; }
-.dashboard-recovery-grid .recovery-stat { padding:10px 18px; }
-.dashboard-recovery-grid .recovery-stat:nth-child(odd) { padding-left:0; }
-.dashboard-recovery-grid .recovery-stat:nth-child(even) { border-right:0; }
-.dashboard-recovery-grid .recovery-stat:nth-child(-n+2) { border-bottom:1px solid var(--line); padding-bottom:18px; }
-.dashboard-recovery-grid .recovery-stat .metric-value { font-size:clamp(20px,2vw,30px); overflow-wrap:anywhere; white-space:normal; }
-.recovery-page-hero .metric-value { font-size:clamp(22px,2.3vw,34px); }
-.recovery-support-row,.recovery-bottom-row { align-items:stretch; }
-.recovery-support-row > .card,.recovery-bottom-row > .card { height:100%; }
-.funds-metrics { grid-template-columns:repeat(3,minmax(0,1fr)); }
-.recovery-message { margin-top: 20px; padding: 14px 17px; border-radius: 12px; background: var(--sage); color: #245748; }
-.line-graph { width: 100%; min-height: 285px; }
-.line-graph svg { width: 100%; height: 285px; overflow: visible; }
-.graph-grid { stroke: #dfe5dd; stroke-width: 1; }
-.graph-line { fill: none; stroke: var(--green); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
-.graph-area { fill: url(#areaFill); }
-.graph-dot { fill: var(--paper); stroke: var(--green); stroke-width: 3; }
-.graph-label { fill: var(--muted); font-size: 12px; }
-.breakdown-row { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
-.breakdown-row.total { margin-top: 4px; border-bottom: 0; font-weight: 800; }
-.wins-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 13px; }
-.win-card { min-height: 135px; padding: 18px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper-soft); }
-.win-icon { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; color: var(--green); background: var(--sage); margin-bottom: 16px; }
-
-.empty { padding: 48px 24px; text-align: center; color: var(--muted); border: 1px dashed #cfd8cf; border-radius: 15px; }
-.notice { display: flex; justify-content: space-between; gap: 15px; margin: -8px 0 18px; padding: 13px 15px; border-radius: 12px; color: #265b4d; background: var(--sage); }
-.notice.error { color: #a43e31; background: var(--coral-soft); }
-.notice button { border: 0; color: inherit; background: transparent; font-weight: 800; }
-
-.modal-backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 22px; background: rgba(8,29,27,.55); z-index: 50; }
-.modal-panel { width: min(610px,100%); max-height: min(800px,92vh); overflow: auto; padding: 26px; border-radius: 22px; background: var(--paper); box-shadow: 0 24px 90px rgba(0,0,0,.22); }
-.modal-panel.wide { width: min(920px,100%); }
-.modal-panel.full-page { width:min(1120px,calc(100vw - 64px)); height:auto; max-height:88vh; padding:30px 32px; border-radius:20px; }
-.modal-header { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
-.modal-header h2 { margin: 0; font-size: 27px; }
-.modal-header p { margin: 6px 0 0; color: var(--muted); }
-.close-button { width: 38px; height: 38px; border: 0; border-radius: 10px; color: var(--muted); background: var(--sage-2); font-size: 20px; }
-.form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
-.field { display: grid; gap: 6px; }
-.field.full { grid-column: 1 / -1; }
-.field label { font-size: 12px; font-weight: 760; }
-.field input, .field select, .field textarea { width: 100%; padding: 11px 12px; border: 1px solid #cfd8cf; border-radius: 10px; color: var(--ink); background: white; }
-.field textarea { min-height: 90px; resize: vertical; }
-.field-hint { color: var(--muted); font-size: 11px; }
-.debt-detail-actions{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 20px}.debt-detail-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:30px}.debt-detail-columns section{min-width:0}.debt-detail-columns h3,.debt-activity-heading{margin:0 0 10px;font-family:var(--serif);font-size:20px}.debt-detail-row{display:grid;grid-template-columns:minmax(165px,1fr) minmax(170px,auto);column-gap:28px;row-gap:6px;align-items:baseline;padding:11px 0;border-bottom:1px solid var(--line)}.debt-detail-row span{color:var(--muted);font-weight:650}.debt-detail-row strong{text-align:right;overflow-wrap:anywhere}.debt-detail-progress{padding:14px 0}.debt-detail-progress small,.projection-note{display:block;margin-top:7px;color:var(--muted);font-size:12px;line-height:1.5}.debt-activity-heading{margin-top:26px;padding-top:20px;border-top:1px solid var(--line)}
-.modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
-.warning-box { margin: 15px 0; padding: 12px 14px; border-radius: 11px; color: #7b493d; background: var(--coral-soft); font-size: 13px; }
-.settle-check { display:none; align-items:flex-start; gap:10px; margin-top:15px; padding:13px; border-radius:11px; background:var(--sage-2); }
-.settle-check.show { display:flex; }
-.settle-check input { margin-top:3px; }
-.settle-check span { display:grid; gap:3px; }
-.settle-check small { color:var(--muted); }
-.secondary-due { display:none !important; }
-.secondary-due.show { display:grid !important; }
-.breakdown-box { margin-top: 16px; padding: 14px; border-radius: 12px; background: var(--sage-2); }
-.breakdown-box .breakdown-row { padding: 8px 0; }
-.choice-list { display:grid; gap:12px; margin-top:16px; }
-.choice-card { display:flex; align-items:flex-start; gap:12px; padding:16px; border:1px solid var(--line); border-radius:13px; background:var(--paper-soft); cursor:pointer; }
-.choice-card input { margin-top:4px; accent-color:var(--green); }
-.choice-card span { display:grid; gap:4px; }
-.choice-card small { color:var(--muted); }
-.summary-table-wrap { margin-top:22px; }
-.summary-table { min-width:680px; }
-.summary-table tfoot th { padding:16px 12px; border-top:2px solid var(--line); color:var(--navy); font-size:14px; text-align:left; }
-.summary-table tfoot th.amount { text-align:right; }
-.summary-detail { display:block; margin-top:3px; color:var(--muted); font-weight:400; }
-.summary-overdue td { color:var(--coral); }
-.overdue-text { display:inline-block; margin-left:8px; color:var(--coral); font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
-
-@media (max-width: 1120px) {
-  .cost-row { grid-template-columns:repeat(3,minmax(0,1fr)); }
-  .cost-row.bill-plan-row { grid-template-columns:repeat(3,minmax(0,1fr)); }
-  .forecast-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
-  .metrics, .metrics.five { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  .split-wide { grid-template-columns: 1fr; }
-  .list-row { grid-template-columns: 80px minmax(180px,1fr) 130px auto; }
-  .list-row > :nth-child(3) { display: none; }
-  .goal-row { grid-template-columns: minmax(190px,1fr) 150px auto; }
-  .goal-row > :nth-child(2) { display: none; }
-  .recovery-hero { grid-template-columns: repeat(2,1fr); gap: 18px 0; }
-  .recovery-stat:nth-child(2) { border-right: 0; }
-  .expected-income-row { grid-template-columns:70px minmax(180px,1fr) auto 110px; }
-  .expected-income-actions { grid-column:2/-1; }
-  .income-lower .list-row.compact { grid-template-columns:60px minmax(0,1fr) auto; }
-  .income-lower .list-row.compact > .amount { display:none; }
-  .income-lower .activity-row { grid-template-columns:58px 32px minmax(0,1fr) auto; }
-  .income-lower .activity-row > .amount { display:none; }
-  .dashboard-recovery-grid .wins-grid { grid-template-columns:1fr; }
-  .debt-board { grid-template-columns:repeat(2,minmax(0,1fr)); }
+function attentionItems(){
+  const items=[];
+  state.bills.forEach(b=>{const unpaid=billRemaining(b),due=billEffectiveDueOn(b);if(!unpaid||due>=TODAY)return;items.push({severity:'Overdue',category:'Living Expenses',name:b.name,amount:unpaid,due,detail:b.status==='Needs review'?`Actual exceeds the ${money(b.plan)} plan.`:'Current bill remains unpaid.',impact:'Counts toward unpaid obligations.',action:'pay-bill',id:b.id,priority:1});});
+  openDebts().forEach(d=>{const remaining=debtDueThrough(d,TODAY);if(!remaining||!d.dueDate||d.dueDate>=TODAY)return;items.push({severity:'Overdue',category:'Debt',name:d.creditor,amount:remaining,due:d.dueDate,detail:'Scheduled payment remains due.',impact:'Reduces this month’s projected position.',action:'record-payment',id:d.id,priority:1});});
+  return items.sort((a,b)=>a.priority-b.priority||(a.due||'9999').localeCompare(b.due||'9999'));
 }
 
-@media (max-width: 760px) {
-  .modal-panel.full-page { width:calc(100vw - 24px); height:auto; max-height:92vh; padding:22px 18px; border-radius:16px; }
-  .forecast-grid { grid-template-columns:1fr 1fr; }
-  .forecast-grid .metric:last-child { grid-column:1/-1; }
-  .loading-grid { grid-template-columns:1fr; }
-  .sidebar { transform: translateX(-101%); transition: transform .2s; box-shadow: 18px 0 55px rgba(0,0,0,.14); }
-  .sidebar.open { transform: translateX(0); }
-  .main-shell { margin-left: 0; padding: 0 16px 55px; }
-  .mobile-bar { height: 62px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); }
-  .icon-button { min-height: 38px; padding: 6px 11px; color: var(--green); border-color: #ced8ce; background: var(--paper); }
-  .page-header { align-items: start; margin-top: 27px; }
-  .page-header, .section-heading, .card-header { flex-direction: column; }
-  .page-actions { justify-content: flex-start; width: 100%; }
-  .summary-controls { justify-content:flex-start; width:100%; }
-  .summary-custom-dates { width:100%; flex-wrap:wrap; }
-  .summary-chart-layout { align-items:flex-start; flex-direction:column; gap:22px; }
-  .page-actions > button { flex: 1; }
-  .grid-2, .grid-3, .attention-grid, .wins-grid { grid-template-columns: 1fr; }
-  .income-hero { grid-template-columns:1fr; }
-  .allocation-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .allocation-summary-item:nth-child(2) { border-right:0; }
-  .allocation-summary-item:nth-child(-n+2) { border-bottom:1px solid var(--line); }
-  .expected-income-row { grid-template-columns:1fr auto; gap:9px 12px; }
-  .expected-income-row > .date,.expected-income-copy { grid-column:1; }
-  .expected-income-row > .pill,.expected-income-row > .amount { grid-column:2; justify-self:end; }
-  .expected-income-actions { grid-column:1/-1; justify-content:flex-start; }
-  .expected-income-actions .button-secondary { flex:1; }
-  .income-lower .list-row.compact { grid-template-columns:1fr; align-items:start; }
-  .income-lower .list-row.compact > * { display:block; text-align:left; }
-  .income-lower .activity-row { grid-template-columns:55px 32px minmax(0,1fr); }
-  .income-lower .activity-row > .amount { display:none; }
-  .attention-separator { border-left: 0; padding-left: 0; }
-  .attention-item { grid-template-columns:1fr auto; padding:14px 0; }
-  .attention-item .attention-code { grid-column:1/-1; }
-  .attention-detail { grid-template-columns:1fr; }
-  .attention-detail .amount { text-align:left; }
-  .cost-row { grid-template-columns:1fr; }
-  .cost-row.budget-plan-row,.cost-row.bill-plan-row { grid-template-columns:1fr; }
-  .activity-row { grid-template-columns: 65px 32px 1fr auto; }
-  .activity-row.deletable { grid-template-columns:55px 32px minmax(0,1fr); }
-  .activity-row.deletable > .amount { display:none; }
-  .activity-row.deletable > :last-child { grid-column:3; }
-  .activity-tag { display: none; }
-  .list-row, .list-row.compact { grid-template-columns: 60px 1fr auto; }
-  .list-row > :nth-child(3), .list-row > :nth-child(4) { display: none; }
-  .goal-row { grid-template-columns: 1fr; }
-  .goal-balance { text-align: left; }
-  .goal-detail-grid { grid-template-columns:1fr; }
-  .card-actions { justify-content:flex-start; flex-wrap:wrap; }
-  .debt-table:not(.debt-accounts-table) thead { display: none; }
-  .debt-table:not(.debt-accounts-table), .debt-table:not(.debt-accounts-table) tbody, .debt-table:not(.debt-accounts-table) tr, .debt-table:not(.debt-accounts-table) td { display: block; width: 100%; }
-  .debt-table:not(.debt-accounts-table) tr { padding: 14px 0; border-bottom: 1px solid var(--line); }
-  .debt-table:not(.debt-accounts-table) td { padding: 4px 0; border: 0; text-align: left !important; }
-  .debt-table td[data-label]::before { content:attr(data-label); display:block; margin-bottom:2px; color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; }
-  .debt-board { grid-template-columns:1fr; }
-  .paid-debts .debt-account-card { grid-template-columns:1fr; }
-  .recovery-hero { grid-template-columns: 1fr; }
-  .recovery-stat { padding: 12px 0; border-right: 0; border-bottom: 1px solid var(--line); }
-  .form-grid { grid-template-columns: 1fr; }
-  .debt-schedule-grid,.debt-interest-grid { grid-template-columns:1fr; }
-  .field.full { grid-column: auto; }
-  .debt-detail-columns{grid-template-columns:1fr}.debt-detail-row{grid-template-columns:1fr auto}
+function renderDashboard(){
+  header('Your financial month','See what needs attention and where your money is going.');
+  const monthStart=`${MONTH}-01`,monthEnd=`${MONTH}-${String(new Date(Number(MONTH.slice(0,4)),Number(MONTH.slice(5,7)),0).getDate()).padStart(2,'0')}`;
+  const debtDue=openDebts().reduce((s,d)=>s+debtScheduledBetween(d,monthStart,monthEnd),0);
+  const paid=Math.abs(activitiesFor('debt').filter(a=>a.type==='payment'&&a.date.startsWith(MONTH)).reduce((s,a)=>s+a.amount,0));
+  const unpaidDebt=openDebts().reduce((s,d)=>s+debtDueThrough(d,monthEnd),0);
+  const unpaidBills=state.bills.filter(b=>dueOnOrBefore(b.dueOn,monthEnd)).reduce((s,b)=>s+billRemaining(b),0);
+  const unpaid=unpaidDebt+unpaidBills;
+  const attention=attentionItems().slice(0,4);
+  const attentionHtml=attention.length?`<div class="attention-grid">${attention.map((x,i)=>`<button type="button" class="attention-item ${i%2?'attention-separator':''}" data-action="${x.action}" data-id="${h(x.id)}"><span class="attention-code">${h(x.severity)}</span><div><span class="row-title">${h(x.name)}</span><span class="row-subtitle">${h(x.detail)}</span></div><span class="amount">${money(x.amount)} ›</span></button>`).join('')}</div>`:`<div class="empty">Nothing needs attention right now.</div>`;
+  const forecastEndDate=new Date(`${TODAY}T00:00:00+08:00`);forecastEndDate.setDate(forecastEndDate.getDate()+29);
+  const forecastEnd=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(forecastEndDate);
+  const inForecast=date=>date&&date>=TODAY&&date<=forecastEnd;
+  const dueInForecast=date=>dueOnOrBefore(date,forecastEnd);
+  const expectedItems=state.expected.filter(x=>x.status==='Expected'&&inForecast(x.date));
+  const expectedIncome=expectedItems.reduce((s,x)=>s+x.amount,0);
+  const billObligations=state.bills.filter(b=>dueInForecast(b.dueOn)).reduce((s,b)=>s+billRemaining(b),0);
+  const debtObligations=openDebts().reduce((s,d)=>s+debtDueThrough(d,forecastEnd),0);
+  const requiredObligations=billObligations+debtObligations,projectedPosition=expectedIncome-requiredObligations;
+  const forecast=`<div class="grid-3">${metric('EXPECTED INCOME',money(expectedIncome),`From ${expectedItems.length} income record${expectedItems.length===1?'':'s'}`,'positive')}${metric('REQUIRED OBLIGATIONS',money(requiredObligations),'Overdue/unpaid bills and debt due in this period')}${metric('PROJECTED POSITION',money(projectedPosition),projectedPosition<0?'Projected shortfall':'Projected surplus',projectedPosition<0?'negative':'positive')}</div><div class="${projectedPosition<0?'warning-box':'recovery-message'}"><b>Forecast ${projectedPosition<0?'shortfall':'surplus'} · ${money(Math.abs(projectedPosition))}</b>${projectedPosition<0?' may still need funding.':' remains after required obligations.'}</div>`;
+  app.innerHTML=`
+    <div class="metrics">${metric('Available this month',money(Object.values(state.funds).reduce((a,b)=>a+b,0)),'Across all categories','positive')}${metric('Due this month',money(debtDue),'Scheduled debt payments')}${metric('Paid this month',money(paid),'Debt payments recorded','positive')}${metric('Unpaid this month',money(unpaid),'Bills and debt still due','negative')}</div>
+    ${card('Needs attention',attentionHtml,`<button class="link-button" data-action="attention-all">View all →</button>`)}
+    ${card('Forecast',forecast,pill(`30 Days · ${shortDate(TODAY)} – ${shortDate(forecastEnd)}`),'See what’s coming before it becomes due. Expected income remains planning only.')}
+    <div class="grid-2 dashboard-recovery-grid">${recoverySnapshotCard()}${card('Wins & milestones',winsHtml(),`<button type="button" class="link-button" data-page="recovery">View Recovery →</button>`)}</div>
+    ${activitySection('', 'Recent activity')}`;
 }
 
-@media (max-width: 900px) {
-  .admin-shell .table-wrap table,.admin-shell .table-wrap tbody,.admin-shell .table-wrap tr,.admin-shell .table-wrap td { display:block; width:100%; }
-  .admin-shell .table-wrap thead { display:none; }
-  .admin-shell .table-wrap tr { padding:12px 0; border-bottom:1px solid var(--line); }
-  .admin-shell .table-wrap td { padding:6px 0; border:0; }
-  .admin-shell .table-wrap select { width:100%; margin-bottom:8px; }
+function renderIncome(){
+  header('Income','Record received income and plan what is expected.',button('+ Add income','add-income'));
+  const actualThisMonth=state.incomes.filter(i=>i.date.startsWith(MONTH)).reduce((sum,i)=>sum+Number(i.amount),0);
+  const openExpected=state.expected.filter(i=>i.status==='Expected'),expectedTotal=openExpected.reduce((sum,i)=>sum+Number(i.amount),0),nextExpected=openExpected.slice().sort((a,b)=>a.date.localeCompare(b.date))[0];
+  const incomeHero=`<div class="income-hero"><div class="income-hero-item"><span class="income-hero-icon">₱</span><div><span class="metric-label">Actual income</span><strong class="metric-value">${money(actualThisMonth)}</strong><span class="metric-note">Received this month</span></div></div><div class="income-hero-item expected"><span class="income-hero-icon">☷</span><div><span class="metric-label">Expected income</span><strong class="metric-value">${money(expectedTotal)}</strong><span class="metric-note">Still expected</span>${nextExpected?`<div class="next-expected"><b>Next expected</b><span>${shortDate(nextExpected.date)} · ${h(nextExpected.name)} · ${money(nextExpected.amount)}</span></div>`:'<div class="next-expected"><span>No expected income scheduled.</span></div>'}</div></div></div>`;
+  const incomeRows=state.incomes.map(i=>`<div class="list-row compact"><span class="date">${shortDate(i.date)}</span><div><span class="row-title">${h(i.description)}</span><span class="row-subtitle">${h(i.source)} · allocated automatically</span></div><span class="amount positive">+${money(i.amount)}</span><button class="button-secondary" data-action="income-breakdown" data-id="${h(i.id)}">Breakdown</button></div>`).join('');
+  const expectedRows=state.expected.filter(i=>i.status!=='Cancelled').map(i=>`<div class="expected-income-row"><span class="date">${shortDate(i.date)}</span><div class="expected-income-copy"><span class="row-title">${h(i.name)}</span><span class="row-subtitle">${h(i.source)} · expected ${money(i.amount)}</span></div>${pill(i.status,i.status==='Received'?'':'gold')}<span class="amount">${money(i.amount)}</span><div class="expected-income-actions">${i.status==='Expected'?`<button type="button" class="button-secondary" data-action="receive-expected" data-id="${h(i.id)}">Receive</button><button type="button" class="button-ghost" data-action="edit-expected" data-id="${h(i.id)}">Edit</button><button type="button" class="button-ghost negative" data-action="cancel-expected" data-id="${h(i.id)}">Cancel</button>`:''}</div></div>`).join('');
+  const allocationHtml=`<div class="allocation-summary-grid">${state.allocations.map(x=>`<div class="allocation-summary-item"><div><span>${h(x.name)}</span><b>${x.percentage}%</b></div><strong>${money(state.funds[x.key])}</strong><small>Available now</small></div>`).join('')}</div>`;
+  app.innerHTML=`${incomeHero}${card('Recovery Allocation',allocationHtml,`<button type="button" class="link-button" data-action="allocation-settings">Edit allocation</button>`,'Your received income is automatically allocated based on your plan.')}${card('Expected income',`<div class="list expected-income-list">${expectedRows||'<div class="empty">No expected income plans.</div>'}</div>`,`<button type="button" class="link-button" data-action="manage-income">Manage plans</button>`)}<div class="grid-2 income-lower">${card('Income received',`<div class="list">${incomeRows||'<div class="empty">No income received yet.</div>'}</div>`,'','Allocation is recorded with every received income')}${activitySection('income','Income activity')}</div>`;
 }
 
-/* Keep Living Expenses row controls inside each half-width desktop card. */
-@media (min-width: 761px) {
-  .grid-2 .list-row:not(.compact) {
-    grid-template-columns: 48px minmax(0,1fr) auto minmax(72px,auto) auto;
-    gap: 12px;
+function recoverySnapshotCard(){
+  if(!state.journey)return card('Recovery snapshot','<div class="empty">Recovery journey not started.</div>',`<button type="button" class="link-button" data-page="recovery">Set up Recovery →</button>`);
+  const change=currentDebt()-state.journey.startingDebt;
+  return card('Recovery snapshot',`<div class="recovery-hero"><div class="recovery-stat"><span class="metric-label">Starting debt</span><strong class="metric-value">${money(state.journey.startingDebt)}</strong></div><div class="recovery-stat"><span class="metric-label">Current debt</span><strong class="metric-value">${money(currentDebt())}</strong></div><div class="recovery-stat"><span class="metric-label">Change</span><strong class="metric-value ${change>0?'negative':'positive'}">${change>0?'+':''}${money(change)}</strong></div><div class="recovery-stat"><span class="metric-label">Recovered</span><strong class="metric-value">${Number(state.recoverySummary?.recoveredPercentage||0).toFixed(1)}%</strong></div></div>`,`<button type="button" class="link-button" data-page="recovery">View Recovery →</button>`);
+}
+
+function renderLiving(){
+  const planned=state.bills.reduce((s,b)=>s+b.plan,0)+state.budgets.reduce((s,b)=>s+b.plan,0);
+  const spent=Math.abs(Math.min(0,activitiesFor('living').filter(a=>a.date.startsWith(MONTH)&&(['expense','bill'].includes(a.type)||(a.type==='reversal'&&['expense','bill'].includes(a.originalType)))).reduce((s,a)=>s+a.amount,0)));
+  const due=state.bills.reduce((s,b)=>s+billRemaining(b),0);
+  header('Living Expenses','Stay ahead of bills and everyday spending.',button('+ Add funds','add-funds')+button('+ Record expense','record-expense'));
+  const bills=state.bills.slice().sort((a,b)=>billUrgency(a)-billUrgency(b)||billEffectiveDueOn(a).localeCompare(billEffectiveDueOn(b))||String(a.name).localeCompare(String(b.name))).map(b=>{const status=billDisplayStatus(b),due=billEffectiveDueOn(b);return `<div class="list-row"><span class="date">${shortDate(due)}</span><div><span class="row-title">${h(b.name)}</span><span class="row-subtitle">${h((b.frequency||'monthly').replace('_',' '))} · ${b.actual>b.plan?`actual is ${money(b.actual-b.plan)} above plan`:'planned '+money(b.plan)}</span></div>${pill(status,['Overdue','Needs review'].includes(status)?'bad':'')}<span class="amount">${money(billRemaining(b))}</span><div class="row-actions"><button type="button" class="button-secondary" data-action="pay-bill" data-id="${h(b.id)}">Pay</button></div></div>`;}).join('');
+  const budgets=state.budgets.map(b=>`<div class="goal-row"><div><span class="row-title">${h(b.name)}</span><span class="row-subtitle">${money(b.spent)} of ${money(b.plan)}</span></div><div>${track(b.spent,b.plan,b.spent>b.plan?'coral':'')}</div><span class="amount">${money(b.plan-b.spent)}</span><button class="button-secondary" data-action="log-expense" data-id="${h(b.id)}">Log expense</button></div>`).join('');
+  app.innerHTML=`<div class="metrics">${metric('Monthly plan',money(planned))}${metric('Paid / spent',money(spent))}${metric('Still due',money(due),'Unpaid bills','negative')}${metric('Available funds',money(state.funds.living),'Living Expenses balance','positive')}</div><div class="grid-2">${card('Bills',`<div class="list">${bills||'<div class="empty">No active bill plans.</div>'}</div>`,`<button type="button" class="link-button" data-action="manage-bill-plans">Manage</button>`)}${card('Monthly spending',`<div class="goal-list">${budgets||'<div class="empty">No active spending budgets.</div>'}</div>`,`<button type="button" class="link-button" data-action="manage-budget-plans">Manage</button>`)}</div>${activitySection('living','Living Expenses activity')}`;
+}
+
+function renderFundsPage(type){
+  const isSavings=type==='savings', label=isSavings?'Savings':'Fun', pool=state.funds[type], goals=state.goals[type];
+  header(label,isSavings?'Separate available money from savings goals.':'Track discretionary funds and goals.',button('+ Add funds','add-funds')+button('Use funds','use-funds','button-secondary'));
+  const reserved=goals.reduce((s,g)=>s+g.balance,0);
+  const sections=goals.map(goalSection).join(''),goalActions=`<button class="link-button" data-action="view-all-goals">View all goals</button><button class="link-button" data-action="new-goal">New goal</button>`;
+  const goalsCard=card(`${label} goals`,`<div class="goal-sections goal-count-${Math.min(goals.length,4)}">${sections||'<div class="empty">No goals created yet.</div>'}</div>`,`<div class="card-actions">${goalActions}</div>`);
+  const achievements=isSavings?goalAchievementsCard():'';
+  app.innerHTML=`<div class="metrics funds-metrics">${metric(`Available ${label}`,money(pool),'Not assigned to a goal','positive')}${metric('Reserved in goals',money(reserved))}${metric('Added this month',money(activitiesFor(type).filter(a=>a.date.startsWith(MONTH)&&a.amount>0).reduce((s,a)=>s+a.amount,0)),'Allocations and direct funds','positive')}</div>${goalsCard}<div class="grid-2 funds-history-grid">${activitySection(type,`${label} activity`)}${achievements}</div>`;
+}
+
+function goalProgress(g){return Number(g.target)>0?Math.min(100,Math.max(0,Number(g.balance)/Number(g.target)*100)):null;}
+function goalTypeLabel(type){return ({target:'Target amount',sinking:'Sinking fund',continuous:'Continuous / no target'})[type]||'Goal';}
+function goalDirectoryRow(g){const progress=goalProgress(g);return `<div class="goal-row"><div><button type="button" class="debt-history-link goal-link" data-action="goal-details" data-id="${h(g.id)}">${h(g.name)}</button><span class="row-subtitle">${g.type==='continuous'?'Continuous fund · no target':`${money(g.balance)} of ${money(g.target)}`}</span></div><div>${progress==null?'<span class="micro">Ongoing</span>':`${track(g.balance,g.target)}<span class="micro">${progress.toFixed(0)}%</span>`}</div><span class="goal-balance amount">${money(g.balance)}</span><div class="row-actions"><button class="button-secondary" data-action="allocate-goal" data-id="${h(g.id)}">Allocate</button><button class="button-ghost" data-action="use-funds" data-id="${h(g.id)}">Use</button></div></div>`;}
+function goalSection(g){const progress=goalProgress(g);return `<section class="goal-section"><div class="goal-section-head"><button type="button" class="goal-link" data-action="goal-details" data-id="${h(g.id)}">${h(g.name)}</button><b>${progress==null?'Ongoing':progress.toFixed(0)+'%'}</b></div><strong class="goal-section-amount">${money(g.balance)}</strong><span class="row-subtitle">${g.type==='continuous'?'Available anytime · no fixed target':`of ${money(g.target)} target`}</span>${progress==null?'':track(g.balance,g.target)}<div class="goal-section-actions"><button class="button-secondary" data-action="allocate-goal" data-id="${h(g.id)}">Allocate</button><button class="button-ghost" data-action="use-funds" data-id="${h(g.id)}">Use</button></div></section>`;}
+function goalAchievementsCard(){const items=(state.goalAchievements||[]).filter(x=>x.category==='savings'),rows=items.map(x=>`<div class="achievement-row"><button type="button" class="goal-link" data-action="goal-details" data-id="${h(x.goalId)}">${h(x.name)}</button><strong>${money(x.amount)}</strong><span>${fullDate(x.achievedOn)}</span></div>`).join('');return card('Goals achieved',`<div class="achievement-head"><span>Goal</span><span>Amount</span><span>Achieved date</span></div><div class="achievement-list">${rows||'<div class="empty">No savings goals achieved yet.</div>'}</div>`);}
+async function goalDetails(id){const type=state.page,achievement=(state.goalAchievements||[]).find(x=>x.goalId===id&&x.category===type),g=state.goals[type].find(x=>x.id===id)||(achievement?{id,name:achievement.name,type:achievement.type||'target',target:achievement.target||achievement.amount,balance:achievement.balance||0,created:achievement.created||'',closed:true}:null);if(!g)return;if(!g.created&&window.DRS_API?.live){try{const raw=await window.DRS_API.request('/api/goals'),saved=raw.items?.find(x=>x.id===id);if(saved?.created_at)g.created=String(saved.created_at).slice(0,10);}catch{}}
+  const progress=goalProgress(g),activity=activitiesFor(type).filter(a=>a.relatedId===g.id),activityRows=activity.length?activity.map(a=>activityRow(a)).join(''):'<div class="empty">No activity recorded for this goal yet.</div>',details=[['Target',g.type==='continuous'?'No fixed target':money(g.target)],['Started',g.created?fullDate(g.created):'Not recorded'],['Goal type',goalTypeLabel(g.type)],['Progress',progress==null?'Ongoing':progress.toFixed(0)+'%']];
+  return openModal({title:g.name,subtitle:`${labelFor(type)} goal information`,form:'noop',wide:true,submit:'Close',body:`<div class="breakdown-box">${details.map(([label,value])=>`<div class="breakdown-row"><span>${h(label)}:</span><b>${h(value)}</b></div>`).join('')}</div><div class="goal-detail-progress">${progress==null?'<span class="micro">Keep adding anytime.</span>':track(g.balance,g.target)}</div><div class="section-heading"><h3>Activity</h3><div class="row-actions">${g.closed?'':`<button type="button" class="button-secondary" data-action="edit-goal" data-id="${h(g.id)}">Edit</button><button type="button" class="button-ghost negative" data-action="delete-goal" data-id="${h(g.id)}">Delete</button>${g.balance>0?`<button type="button" class="button-secondary" data-action="use-funds" data-id="${h(g.id)}">Use</button>`:''}`}</div></div><div class="activity-list goal-activity">${activityRows}</div>`});}
+function allGoalsModal(){const goals=state.goals[state.page]||[],label=labelFor(state.page),achievedIds=new Set((state.goalAchievements||[]).filter(x=>x.category===state.page).map(x=>x.goalId)),progress=goals.filter(g=>!achievedIds.has(g.id)),achieved=goals.filter(g=>achievedIds.has(g.id)),items=goalFilter==='achieved'?achieved:progress,achievementByGoal=new Map((state.goalAchievements||[]).map(x=>[x.goalId,x]));
+  const filters=`<div class="debt-filters goal-status-filters"><button type="button" class="debt-filter ${goalFilter==='progress'?'active':''}" data-action="goal-filter" data-filter="progress">In Progress (${progress.length})</button><button type="button" class="debt-filter ${goalFilter==='achieved'?'active':''}" data-action="goal-filter" data-filter="achieved">Achieved (${achieved.length})</button></div>`;
+  const rows=items.map(g=>{const achievement=achievementByGoal.get(g.id),pct=goalProgress(g);return `<tr><td><button type="button" class="goal-link" data-action="goal-details" data-id="${h(g.id)}">${h(g.name)}</button></td><td>${h(goalTypeLabel(g.type))}</td><td class="amount">${money(g.balance)}</td><td class="amount">${g.type==='continuous'?'No fixed target':money(g.target)}</td><td><div class="goal-modal-progress">${pct==null?'<span class="micro">Ongoing</span>':`${track(g.balance,g.target)}<span class="micro">${pct.toFixed(0)}%</span>`}</div></td><td>${achievement?fullDate(achievement.achievedOn):'—'}</td></tr>`;}).join('');
+  return openModal({title:`All ${label} goals`,subtitle:`${progress.length} in progress · ${achieved.length} achieved`,form:'noop',fullPage:true,body:`${filters}<div class="table-wrap"><table class="debt-table goal-all-table"><thead><tr><th>Goal</th><th>Goal type</th><th class="amount">Saved</th><th class="amount">Target</th><th>Progress</th><th>Achieved date</th></tr></thead><tbody>${rows||'<tr><td colspan="6"><div class="empty">No goals in this section.</div></td></tr>'}</tbody></table></div>`});}
+
+function renderDebt(){
+  const active=openDebts().filter(d=>d.status!=='Paused'),monthStart=`${MONTH}-01`,monthEnd=`${MONTH}-${String(new Date(Number(MONTH.slice(0,4)),Number(MONTH.slice(5,7)),0).getDate()).padStart(2,'0')}`,due=active.reduce((s,d)=>s+debtScheduledBetween(d,monthStart,monthEnd),0);
+  const paid=Math.abs(activitiesFor('debt').filter(a=>a.type==='payment'&&a.date.startsWith(MONTH)).reduce((s,a)=>s+a.amount,0));
+  const unpaid=active.reduce((s,d)=>s+debtDueThrough(d,monthEnd),0);
+  header('Debt','Understand every balance, due date, agreement, and change.',button('Add funds','add-funds','button-secondary')+button('Record payment','record-payment','button-secondary')+button('+ Add debt','add-debt'));
+  app.innerHTML=`<div class="metrics five">${metricButton('Current debt',money(currentDebt()),'','', 'current')}${metricButton('Debt funds available',money(state.funds.debt),'Ready for payments','positive','funds')}${metricButton('Due this month',money(due),'','','due')}${metricButton('Paid this month',money(paid),'Recorded payments','positive','paid')}${metricButton('Unpaid this month',money(unpaid),'Still required','negative','unpaid')}</div>${card('Debt accounts',debtAccountsView(openDebts(),'paused'),`<button class="link-button" data-action="view-debts">View all debt accounts →</button>`)}<div class="grid-2 debt-lower-grid">${activitySection('debt','Recent debt activity')}${almostDoneCard()}</div>`;
+}
+function almostDoneCard(){
+  const debts=openDebts().filter(d=>d.status!=='Paused'&&Number(d.balance)>0).sort((a,b)=>Number(a.balance)-Number(b.balance)||String(a.creditor).localeCompare(String(b.creditor))).slice(0,5);
+  const rows=debts.map(d=>`<div class="almost-done-row"><button type="button" class="debt-history-link" data-action="debt-history" data-id="${h(d.id)}">${h(d.creditor)}</button><strong class="amount">${money(d.balance)}</strong><button type="button" class="button-secondary compact-button" data-action="record-payment" data-id="${h(d.id)}">Pay</button></div>`).join('');
+  return card('Almost Done',`<div class="almost-done-head"><span>Creditor</span><span>Amount</span><span></span></div><div class="almost-done-list">${rows||'<div class="empty">No active debts to show.</div>'}</div>`,'','Your five lowest active debt balances.');
+}
+function interestLabel(d){ if(d.interestMode==='none')return'No interest'; if(d.interestMode==='included')return'Interest included in total'; if(d.interestMode==='fixed')return`${money(d.interestValue)} fixed ${d.interestFrequency} interest`; return`${d.interestValue}% ${d.interestFrequency} interest`; }
+function arrangementLabel(value){return ({one_time:'One-Time Payment',twice_monthly:'Twice a Month',monthly:'Monthly',weekly:'Weekly',daily:'Daily'})[value]||'Monthly';}
+function debtFilterLabel(key){return ({overdue:'Overdue',today:'Due Today',month:'Due This Month',upcoming:'Upcoming',paused:'Paused',paid:'Paid / Closed'})[key];}
+function debtAccountsView(debts,includeSpecialSections=false){
+  const counts={overdue:0,today:0,month:0,upcoming:0,paused:0,paid:0};debts.forEach(d=>{const key=d.status==='Paused'?'paused':debtTiming(d);if(key in counts)counts[key]++;});
+  const statusKeys=['overdue','today','month','upcoming',...(includeSpecialSections?['paused']:[]),...(includeSpecialSections===true?['paid']:[])];if(!counts[debtFilter])debtFilter=statusKeys.find(key=>counts[key]>0)||'';
+  const visible=(debtFilter?debts.filter(d=>(d.status==='Paused'?'paused':debtTiming(d))===debtFilter):[]).sort((a,b)=>(a.dueDate||'9999-12-31').localeCompare(b.dueDate||'9999-12-31')||String(a.creditor).localeCompare(String(b.creditor)));
+  const filters=statusKeys.filter(key=>counts[key]>0).map(key=>`<button type="button" class="debt-filter ${debtFilter===key?'active':''}" data-action="debt-filter" data-filter="${key}">${debtFilterLabel(key)} (${counts[key]})</button>`).join('');
+  const rows=visible.map(debtTableRow).join('');
+  const headings='<tr><th>Debt / lender</th><th class="amount">Debt balance</th><th>Due date</th><th class="amount">Scheduled</th><th class="amount">Paid</th><th class="amount">Remaining due</th><th>Interest</th><th>Progress</th><th>Action</th></tr>';
+  return `<div class="debt-filters">${filters}</div><div class="table-wrap"><table class="debt-table debt-accounts-table"><thead>${headings}</thead><tbody>${rows||'<tr><td colspan="9"><div class="empty">No debt accounts in this view.</div></td></tr>'}</tbody></table></div>`;
+}
+function debtTableRow(d){const paid=Number(d.monthlyPaid||0),scheduled=debtTableScheduled(d),remaining=debtTableRemaining(d),progress=scheduled>0?Math.min(100,paid/scheduled*100):(d.balance<=0?100:0),payable=debtTiming(d)!=='paid';return `<tr><td data-label="Debt / lender"><button type="button" class="debt-history-link" data-action="debt-history" data-id="${h(d.id)}">${h(d.creditor)}</button></td><td data-label="Debt balance" class="amount">${money(d.balance)}</td><td data-label="Due date">${d.dueDate?shortDate(d.dueDate):'Flexible'}</td><td data-label="Scheduled" class="amount">${scheduled>0?money(scheduled):d.payment>0?money(d.payment):'Flexible'}</td><td data-label="Paid" class="amount positive">${money(paid)}</td><td data-label="Remaining due" class="amount">${money(remaining)}</td><td data-label="Interest">${h(interestLabel(d))}</td><td data-label="Progress"><div class="debt-progress">${track(progress,100)}<small>${progress.toFixed(0)}%</small></div></td><td data-label="Action">${payable?`<button type="button" class="button-secondary compact-button" data-action="record-payment" data-id="${h(d.id)}">Pay</button>`:'<span class="pill">Closed</span>'}</td></tr>`;}
+
+function debtObligationRows(debts,from,through,subtractPayments=false){const rows=[];debts.filter(d=>d.status!=='Paused').forEach(d=>{let capacity=Number(d.balance||0),paid=subtractPayments?Number(d.monthlyPaid||0):0;debtScheduleDates(d,from,through).forEach(date=>{if(capacity<=0)return;const scheduled=Math.min(Number(d.payment||0),capacity);capacity-=scheduled;const applied=Math.min(paid,scheduled);paid-=applied;const amount=scheduled-applied;if(amount>.001)rows.push({creditor:d.creditor,date,amount,overdue:date<TODAY});});});return rows.sort((a,b)=>a.date.localeCompare(b.date)||a.creditor.localeCompare(b.creditor));}
+function debtSummaryTable(headers,rows,total,label='Total'){return `<div class="table-wrap summary-table-wrap"><table class="debt-table summary-table"><thead><tr>${headers.map(x=>`<th class="${x.amount?'amount':''}">${h(x.label)}</th>`).join('')}</tr></thead><tbody>${rows||`<tr><td colspan="${headers.length}"><div class="empty">No records to show.</div></td></tr>`}</tbody><tfoot><tr><th colspan="${Math.max(headers.length-1,1)}">${h(label)}</th><th class="amount">${money(total)}</th></tr></tfoot></table></div>`;}
+function debtMetricModal(key){const active=openDebts().filter(d=>d.status!=='Paused'),monthStart=`${MONTH}-01`,monthEnd=`${MONTH}-${String(new Date(Number(MONTH.slice(0,4)),Number(MONTH.slice(5,7)),0).getDate()).padStart(2,'0')}`;let title='',subtitle='',body='';
+  if(key==='current'){title='Current debts';subtitle='Active accounts from smallest to largest balance, followed by paused accounts.';const debts=openDebts().slice().sort((a,b)=>Number(a.status==='Paused')-Number(b.status==='Paused')||Number(a.balance)-Number(b.balance)||String(a.creditor).localeCompare(String(b.creditor)));body=debtSummaryTable([{label:'Creditor / account'},{label:'Status'},{label:'Current balance',amount:true}],debts.map(d=>`<tr><td><button type="button" class="debt-history-link" data-action="debt-history" data-id="${h(d.id)}">${h(d.creditor)}</button></td><td>${h(d.status==='Paused'?'Paused':'Active')}</td><td class="amount">${money(d.balance)}</td></tr>`).join(''),debts.reduce((s,d)=>s+Number(d.balance),0),'Total current debt');}
+  if(key==='funds'){title='Debt funds available';subtitle=`Current available balance: ${money(state.funds.debt)}. Only income allocations and funds added directly are shown.`;const entries=activitiesFor('debt').filter(a=>['allocation','funds'].includes(a.type)&&a.amount>0);body=debtSummaryTable([{label:'Date'},{label:'Activity'},{label:'Amount',amount:true}],entries.map(a=>`<tr><td>${fullDate(a.date)}</td><td><b>${h(a.title)}</b><small class="summary-detail">${h(a.detail||'')}</small></td><td class="amount positive">${money(a.amount)}</td></tr>`).join(''),entries.reduce((s,a)=>s+Number(a.amount),0),'Total funds added');}
+  if(key==='due'){title='Due this month';subtitle=`Scheduled debt payments for ${new Date(monthStart+'T00:00:00').toLocaleDateString('en-PH',{month:'long',year:'numeric'})}.`;const items=debtObligationRows(active,monthStart,monthEnd);body=debtSummaryTable([{label:'Creditor / account'},{label:'Due date'},{label:'Amount',amount:true}],items.map(x=>`<tr><td>${h(x.creditor)}</td><td>${fullDate(x.date)}</td><td class="amount">${money(x.amount)}</td></tr>`).join(''),items.reduce((s,x)=>s+x.amount,0),'Total due this month');}
+  if(key==='paid'){title='Paid this month';subtitle='Debt payments recorded this month.';const grouped=new Map();activitiesFor('debt').filter(a=>a.type==='payment'&&a.date.startsWith(MONTH)).forEach(a=>{const debt=state.debts.find(d=>d.id===a.relatedId),creditor=debt?.creditor||String(a.title||'Payment').replace(/^Payment(?: made)?\s*[·-]\s*/i,'');const item=grouped.get(creditor)||{creditor,date:a.date,amount:0};item.date=item.date>a.date?item.date:a.date;item.amount+=Math.abs(Number(a.amount));grouped.set(creditor,item);});const items=[...grouped.values()].sort((a,b)=>b.date.localeCompare(a.date)||a.creditor.localeCompare(b.creditor));body=debtSummaryTable([{label:'Creditor / account'},{label:'Last payment date'},{label:'Paid amount',amount:true}],items.map(x=>`<tr><td>${h(x.creditor)}</td><td>${fullDate(x.date)}</td><td class="amount positive">${money(x.amount)}</td></tr>`).join(''),items.reduce((s,x)=>s+x.amount,0),'Total paid this month');}
+  if(key==='unpaid'){title='Unpaid this month';subtitle='Overdue installments and unpaid scheduled payments through the end of this month.';const items=debtObligationRows(active,'0000-01-01',monthEnd,true);body=debtSummaryTable([{label:'Creditor / account'},{label:'Due date'},{label:'Amount',amount:true}],items.map(x=>`<tr class="${x.overdue?'summary-overdue':''}"><td>${h(x.creditor)}${x.overdue?' <span class="overdue-text">Overdue</span>':''}</td><td>${fullDate(x.date)}</td><td class="amount">${money(x.amount)}</td></tr>`).join(''),items.reduce((s,x)=>s+x.amount,0),'Total unpaid this month');}
+  if(title)openModal({title,subtitle,form:'noop',submit:'Close',fullPage:true,body});
+}
+
+function summaryRange(){const [year,month]=summaryAnchor.split('-').map(Number);if(summaryPeriod==='custom')return {from:summaryFrom,to:summaryTo,label:`${fullDate(summaryFrom)} – ${fullDate(summaryTo)}`};if(summaryPeriod==='yearly')return {from:`${year}-01-01`,to:`${year}-12-31`,label:String(year)};if(summaryPeriod==='quarterly'){const first=Math.floor((month-1)/3)*3+1,last=first+2,end=new Date(year,last,0).getDate();return {from:`${year}-${String(first).padStart(2,'0')}-01`,to:`${year}-${String(last).padStart(2,'0')}-${String(end).padStart(2,'0')}`,label:`Q${Math.floor((month-1)/3)+1} ${year}`};}const end=new Date(year,month,0).getDate();return {from:`${summaryAnchor}-01`,to:`${summaryAnchor}-${String(end).padStart(2,'0')}`,label:new Date(`${summaryAnchor}-01T00:00:00`).toLocaleDateString('en-PH',{month:'long',year:'numeric'})};}
+function summaryInRange(date,range){return Boolean(date&&date>=range.from&&date<=range.to);}
+function summaryShift(direction){if(summaryPeriod==='custom')return;const [year,month]=summaryAnchor.split('-').map(Number),date=new Date(Date.UTC(year,month-1,1));date.setUTCMonth(date.getUTCMonth()+direction*(summaryPeriod==='quarterly'?3:summaryPeriod==='yearly'?12:1));summaryAnchor=date.toISOString().slice(0,7);renderSummary();}
+function renderSummary(){
+  const range=summaryRange(),periodActivities=state.activities.filter(a=>summaryInRange(a.date,range)),activeDebts=openDebts().filter(d=>d.status!=='Paused');
+  const income=state.incomes.filter(x=>summaryInRange(x.date,range)).reduce((s,x)=>s+Number(x.amount),0);
+  const outflows={living:Math.abs(periodActivities.filter(a=>a.category==='living'&&['expense','bill'].includes(a.type)).reduce((s,a)=>s+Number(a.amount),0)),debt:Math.abs(periodActivities.filter(a=>a.category==='debt'&&a.type==='payment').reduce((s,a)=>s+Number(a.amount),0)),savings:Math.abs(periodActivities.filter(a=>a.category==='savings'&&a.type==='withdrawal').reduce((s,a)=>s+Number(a.amount),0)),fun:Math.abs(periodActivities.filter(a=>a.category==='fun'&&a.type==='withdrawal').reduce((s,a)=>s+Number(a.amount),0))};
+  const outflow=Object.values(outflows).reduce((s,x)=>s+x,0),available=Object.values(state.funds).reduce((s,x)=>s+Number(x),0),debtPaid=outflows.debt,debtAdded=periodActivities.filter(a=>a.category==='debt'&&a.type==='new-debt').reduce((s,a)=>s+Math.max(Number(a.amount),0),0),cleared=new Set(periodActivities.filter(a=>a.category==='debt'&&a.type==='cleared').map(a=>a.relatedId||a.title)).size;
+  const debtDue=activeDebts.reduce((s,d)=>s+debtDueThrough(d,range.to),0),billDue=summaryPeriod==='monthly'&&summaryAnchor===MONTH?state.bills.reduce((s,b)=>s+billRemaining(b),0):0,totalDue=debtDue+billDue;
+  const savingsReserved=state.goals.savings.reduce((s,g)=>s+Number(g.balance),0),funReserved=state.goals.fun.reduce((s,g)=>s+Number(g.balance),0),achieved=(state.goalAchievements||[]).filter(x=>summaryInRange(x.achievedOn,range)).length;
+  const colors={living:'#cfe7c8',debt:'#238b57',savings:'#71ad78',fun:'#e8c35a'},usage=state.allocations.map(x=>({...x,usedPercentage:outflow>0?outflows[x.key]/outflow*100:0})),stops=[];let cursor=0;usage.forEach(x=>{const next=cursor+x.usedPercentage;if(next>cursor)stops.push(`${colors[x.key]} ${cursor}% ${next}%`);cursor=next;});
+  const allocation=`<div class="summary-chart-layout"><div class="summary-donut" style="background:conic-gradient(${stops.length?stops.join(','):'#e6eee3 0% 100%'})"><span></span></div><div class="summary-legend">${usage.map(x=>`<div><i style="background:${colors[x.key]}"></i><span>${h(x.name)}</span><b>${x.usedPercentage.toFixed(x.usedPercentage%1?1:0)}%</b></div>`).join('')}</div></div>`;
+  const outflowRows=state.allocations.map(x=>`<div class="summary-outflow-row"><span><i style="background:${colors[x.key]}"></i>${h(x.name)}</span><b>${money(outflows[x.key])}</b></div>`).join('')+`<div class="summary-outflow-row total"><span>Total outflow</span><b>${money(outflow)}</b></div>`;
+  const periodOptions=[['monthly','Monthly'],['quarterly','Quarterly'],['yearly','Yearly'],['custom','Custom']].map(([value,label])=>`<option value="${value}" ${summaryPeriod===value?'selected':''}>${label}</option>`).join(''),picker=summaryPeriod==='yearly'?`<input class="summary-period-input" id="summaryAnchor" type="number" min="2000" max="2100" value="${h(summaryAnchor.slice(0,4))}" aria-label="Summary year">`:`<input class="summary-period-input" id="summaryAnchor" type="month" value="${h(summaryAnchor)}" aria-label="Summary period">`,custom=summaryPeriod==='custom'?`<div class="summary-custom-dates"><input id="summaryFrom" type="date" value="${h(summaryFrom)}" aria-label="Summary start date"><span>to</span><input id="summaryTo" type="date" value="${h(summaryTo)}" aria-label="Summary end date"></div>`:'';
+  const controls=`<div class="summary-controls"><select id="summaryPeriod" aria-label="Summary grouping">${periodOptions}</select>${summaryPeriod==='custom'?'':`<button type="button" class="summary-arrow" data-action="summary-shift" data-id="-1" aria-label="Previous period">←</button>${picker}<button type="button" class="summary-arrow" data-action="summary-shift" data-id="1" aria-label="Next period">→</button>`}${custom}</div>`;
+  const debtPosition=`<div class="breakdown-row"><span>Current debt</span><b>${money(currentDebt())}</b></div><div class="breakdown-row"><span>Amount paid</span><b class="positive">${money(debtPaid)}</b></div>${debtAdded>0?`<div class="breakdown-row"><span>Debt added</span><b class="negative">+${money(debtAdded)}</b></div>`:''}${cleared>0?`<div class="breakdown-row"><span>Cleared debt</span><b>${cleared}</b></div>`:''}${debtDue>0?`<div class="breakdown-row"><span>Due through ${summaryPeriod==='monthly'?'month':'period'} end</span><b class="negative">${money(debtDue)}</b></div>`:''}`;
+  header('Summary','Read-only historical reporting.',controls);
+  app.innerHTML=`<div class="summary-period-label">${h(range.label)}</div><div class="metrics">${metric('Income received',money(income),range.label,'positive')}${metric('Available funds',money(available),'Current available balance','positive')}${metric('Recorded outflow',money(outflow),range.label)}${metric('Still due',money(totalDue),summaryPeriod==='monthly'?'Through month-end':'Through period-end','negative')}</div><div class="grid-2 summary-chart-grid">${card('Allocation Overview',allocation,'','Percentage of actual outflow used per category')}${card(`${summaryPeriod==='monthly'?'Monthly':'Period'} Outflow`,outflowRows,'','Actual amount used or paid per category')}</div><div class="grid-2 summary-position-grid">${card('Goals position',`<div class="breakdown-row"><span>Savings reserved in goals</span><b>${money(savingsReserved)}</b></div><div class="breakdown-row"><span>Fun reserved in goals</span><b>${money(funReserved)}</b></div>${achieved>0?`<div class="breakdown-row"><span>Goals achieved</span><b>${achieved}</b></div>`:''}`)}${card('Debt position',debtPosition)}</div>`;
+}
+
+function renderActions(){
+  header('Actions','Move existing funds from one category to another.');
+  const rows=state.transfers.slice().reverse().map(t=>`<div class="list-row compact"><span class="date">${shortDate(t.date)}</span><div><span class="row-title">${labelFor(t.from)} → ${labelFor(t.to)}</span><span class="row-subtitle">Fund transfer</span></div><span class="amount">${money(t.amount)}</span><span></span></div>`).join('');
+  const monthEnd=`${MONTH}-${String(new Date(Number(MONTH.slice(0,4)),Number(MONTH.slice(5,7)),0).getDate()).padStart(2,'0')}`,needs={living:state.bills.reduce((s,b)=>s+billRemaining(b),0),debt:openDebts().reduce((s,d)=>s+debtDueThrough(d,monthEnd),0),savings:null,fun:null};
+  const coverage=Object.keys(state.funds).map(k=>`<tr><td>${labelFor(k)}</td><td class="amount">${money(state.funds[k])}</td><td class="amount">${needs[k]===null?'—':money(needs[k])}</td><td>${needs[k]===null?'Flexible':state.funds[k]>=needs[k]?'Covered':`Short ${money(needs[k]-state.funds[k])}`}</td></tr>`).join('');
+  const options=Object.keys(state.funds).map(k=>`<option value="${k}">${labelFor(k)} · ${money(state.funds[k])}</option>`).join('');
+  const moveForm=`<form id="moveForm" class="form-grid" autocomplete="off"><div class="field"><label>From</label><select name="from" required>${options}</select></div><div class="field"><label>To</label><select name="to" required>${options}</select></div>${field('Amount','amount','number','','min="0.01" step="0.01" required')}${field('Transfer date','date','date',TODAY,'required')}<div class="transfer-preview full">Enter an amount to preview the balances after this move.</div><div class="modal-actions full"><button type="submit" class="button">Move money</button></div></form>`;
+  app.innerHTML=`${card('Category coverage',`<div class="table-wrap"><table class="debt-table"><thead><tr><th>Category</th><th class="amount">Available</th><th class="amount">Still needed</th><th>Coverage</th></tr></thead><tbody>${coverage}</tbody></table></div>`,'','See what is available before moving money.')}`+`<div class="grid-2">${card('Recent moves',rows?`<div class="list">${rows}</div>`:`<div class="empty">No fund transfers recorded yet.</div>`)}${card('Move money',moveForm,'','Transfers change category balances only; they are not income or expenses.')}</div>`;
+}
+
+function renderRecovery(){
+  if(!state.journey){header('Recovery','Review your active debts before starting the recovery journey.');app.innerHTML=card('Set up your recovery journey',`<p class="page-subtitle">Starting debt will be fixed from all active balances only after you confirm.</p><div class="breakdown-box">${state.debts.map(d=>`<div class="breakdown-row"><span>${h(d.creditor)}</span><b>${money(d.balance)}</b></div>`).join('')}<div class="breakdown-row total"><span>Starting debt at confirmation</span><b>${money(currentDebt())}</b></div></div>`,button('Start Recovery Journey','start-journey'));return;}
+  const current=currentDebt(), change=current-state.journey.startingDebt,recovered=state.recoverySummary?.recoveredPercentage??Math.max(0,(state.journey.startingDebt-current)/Math.max(state.journey.startingDebt,1)*100);
+  header('Recovery','See how far you’ve come and where you’re headed.');
+  const recoverySummary=card('Your debt recovery',`<div class="recovery-hero recovery-page-hero"><div class="recovery-stat"><span class="metric-label">Starting debt</span><strong class="metric-value">${money(state.journey.startingDebt)}</strong><span class="metric-note">${shortDate(state.journey.startDate)}</span></div><div class="recovery-stat"><span class="metric-label">Current debt</span><strong class="metric-value">${money(current)}</strong><span class="metric-note">As of ${shortDate(TODAY)}</span></div><div class="recovery-stat"><span class="metric-label">Overall ${change>0?'increase':'reduction'}</span><strong class="metric-value ${change>0?'negative':'positive'}">${change>0?'+':''}${money(change)}</strong><span class="metric-note">Since journey start</span></div><div class="recovery-stat"><span class="metric-label">Recovered</span><strong class="metric-value">${Number(recovered).toFixed(1)}%</strong></div></div><div class="recovery-message">${change>0?`Your debt is currently ${money(change)} above your starting balance.`:`You have recovered ${money(Math.abs(change))} since your journey began.`}</div>`);
+  const recoveryGoal=card('Recovery goal',`<div class="breakdown-row"><span>Journey start</span><b>${shortDate(state.journey.startDate)}</b></div><div class="breakdown-row"><span>Starting debt</span><b>${money(state.journey.startingDebt)}</b></div><div class="breakdown-row"><span>Target balance</span><b>${money(state.journey.targetBalance)}</b></div><div class="breakdown-row"><span>Target date</span><b>${state.journey.targetDate?shortDate(state.journey.targetDate):'Not set'}</b></div><div class="recovery-message">Journey Start and Starting Debt stay fixed.</div>`,`<div class="row-actions"><button class="link-button" data-action="journey-details">Details</button><button class="link-button" data-action="edit-recovery">Edit</button></div>`);
+  const wins=card('Wins & milestones',winsHtml(),`<button class="link-button" data-action="milestones-all">View all →</button>`);
+  const graph=card('Your debt over time',graphHtml(),'','Monthly movement of your total debt balance');
+  const timeline=card('Recovery timeline',recoveryTimeline(),`<button class="link-button" data-action="milestones-all">View all →</button>`,'Only debts cleared and meaningful recovery milestones');
+  const adjustments=card(`Payments vs adjustments — ${new Date(TODAY+'T00:00:00').toLocaleDateString('en-PH',{month:'long'})}`,breakdownHtml());
+  app.innerHTML=`${recoverySummary}<div class="grid-2 recovery-support-row">${recoveryGoal}${wins}</div>${graph}<div class="grid-2 recovery-bottom-row">${timeline}${adjustments}</div>`;
+}
+function graphHtml(){
+  const points=state.recoveryPoints.length?state.recoveryPoints:[{date:TODAY,balance:currentDebt()}],values=points.map(x=>x.balance), rawMin=Math.min(...values),rawMax=Math.max(...values),min=rawMin===rawMax?rawMin*.98:rawMin*.98,max=rawMin===rawMax?rawMax*1.02:rawMax*1.02,w=720,h=250,pad=34;
+  const pts=values.map((v,i)=>[values.length===1?w/2:pad+i*(w-pad*2)/(values.length-1),h-pad-(v-min)/Math.max(max-min,1)*(h-pad*2)]);
+  const line=pts.map(p=>p.join(',')).join(' '), area=`${pad},${h-pad} ${line} ${w-pad},${h-pad}`;
+  return `<div class="line-graph"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Debt balance trend"><defs><linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e8067" stop-opacity=".30"/><stop offset="1" stop-color="#1e8067" stop-opacity=".02"/></linearGradient></defs>${[.25,.5,.75].map(v=>`<line class="graph-grid" x1="${pad}" x2="${w-pad}" y1="${pad+(h-pad*2)*v}" y2="${pad+(h-pad*2)*v}"/>`).join('')}<polygon class="graph-area" points="${area}"/><polyline class="graph-line" points="${line}"/>${pts.map((p,i)=>`<circle class="graph-dot" cx="${p[0]}" cy="${p[1]}" r="5"/><text class="graph-label" text-anchor="middle" x="${p[0]}" y="${h-5}">${new Date(points[i].date+'T00:00:00').toLocaleDateString('en-PH',{month:'short'})}</text>`).join('')}</svg></div>`;
+}
+function breakdownHtml(){
+  const b=state.recoveryBreakdown||{payments:0,negotiated:0,corrections:0,interest:0,newDebt:0},data=[['Payments made',b.payments,'positive'],['Negotiated reductions',b.negotiated,'positive'],['Corrections',b.corrections,''],['Interest added',b.interest,'negative'],['Debt added',b.newDebt,'negative']];
+  const net=data.reduce((s,x)=>s+x[1],0);
+  return data.map(x=>`<div class="breakdown-row"><span>${x[0]}</span><b class="${x[2]}">${x[1]>0?'+':''}${money(x[1])}</b></div>`).join('')+`<div class="breakdown-row total"><span>Net balance change</span><b class="${net>0?'negative':'positive'}">${net>0?'+':''}${money(net)}</b></div>`;
+}
+function winsHtml(){
+  const cleared=state.recoverySummary?.debtsCleared??state.debts.filter(d=>d.balance<=.001).length;
+  const streak=state.journey?(state.recoverySummary?.noNewDebtDays??Math.max(0,Math.floor((new Date(TODAY)-new Date(state.journey.noNewDebtSince))/86400000))):0,negotiated=Math.abs(state.recoveryBreakdown?.negotiated??0);
+  return `<div class="wins-grid"><div class="win-card"><span class="win-icon">✓</span><span class="row-title">No new debt streak</span><span class="metric-value">${state.journey?`${streak} days`:'Not started'}</span><span class="row-subtitle">${state.journey?'Keep protecting the progress':'Starts when the journey is confirmed'}</span></div><div class="win-card"><span class="win-icon">★</span><span class="row-title">Debts cleared</span><span class="metric-value">${cleared}</span><span class="row-subtitle">Accounts fully paid and closed</span></div><div class="win-card"><span class="win-icon">↘</span><span class="row-title">Negotiated recovery</span><span class="metric-value">${money(negotiated)}</span><span class="row-subtitle">Balance formally reduced</span></div></div>`;
+}
+function recoveryTimeline(){
+  const rows=state.activities.filter(a=>['cleared','milestone','negotiated'].includes(a.type)).slice(0,4);
+  return `<div class="activity-list">${rows.length?rows.map(activityRow).join(''):`<div class="empty">Debt-cleared and recovery milestones will appear here.</div>`}</div>`;
+}
+
+function renderAccount(){
+  header('Account','Manage access, privacy, and your records.');
+  const access=state.accountAccess||{status:'Active',plan:'Development entitlement',endsOn:''};app.innerHTML=`<div class="grid-2">${card('Access',`<div class="breakdown-row"><span>Status</span>${pill(access.status)}</div><div class="breakdown-row"><span>Plan</span><b>${access.plan}</b></div>${access.endsOn?`<div class="breakdown-row"><span>Access until</span><b>${shortDate(access.endsOn)}</b></div>`:''}<div class="breakdown-row"><span>Renewal</span><b>Not automatic</b></div><div class="recovery-message">Renewal reminders will offer Payhip or external renewal through support.</div><div class="row-actions account-actions"><button type="button" class="button-secondary" data-action="logout">Log out</button></div>`)}${card('Your data',`<p>Export your records, reset the financial workspace, or request account deletion. Reset keeps your login and access plan; account deletion removes the profile as well.</p><div class="row-actions" style="justify-content:flex-start"><button type="button" class="button-secondary" data-action="export-data">Export data</button><button type="button" class="button-ghost negative" data-action="reset-account">Reset financial data</button><button type="button" class="button-ghost negative" data-action="delete-account">Delete account</button></div>`)}</div>`;
+}
+
+function labelFor(key){ return ({living:'Living Expenses',debt:'Debt',savings:'Savings',fun:'Fun'})[key]||key; }
+let modalReturnFocus=null;
+function openModal(config){
+  const root=$('#modalRoot');modalReturnFocus=document.activeElement;
+  const readOnly=config.form==='noop';
+  root.innerHTML=`<div class="modal-backdrop" role="presentation"><section class="modal-panel ${config.wide?'wide':''} ${config.fullPage?'full-page':''}" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-header"><div><h2 id="modalTitle">${h(config.title)}</h2><p>${h(config.subtitle||'')}</p></div><button type="button" class="close-button" data-action="close-modal" aria-label="Close">×</button></div><form id="modalForm" method="post" action="javascript:void(0)" autocomplete="off" data-form="${h(config.form)}">${config.body}<div id="modalError" role="alert" aria-live="assertive"></div><div class="modal-actions">${readOnly?'':`<button type="button" class="button-secondary" data-action="close-modal">Cancel</button>`}<button type="${readOnly?'button':'submit'}" class="button" ${readOnly?'data-action="close-modal"':''}>${h(config.submit||'Save')}</button></div></form></section></div>`;
+  root.querySelectorAll('input,textarea').forEach(control=>{control.setAttribute('autocomplete','off');control.setAttribute('autocorrect','off');control.setAttribute('autocapitalize','off');control.setAttribute('spellcheck','false');});
+  root.querySelectorAll('[data-action="close-modal"]').forEach(button=>button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();closeModal();}));
+  root.querySelector('#modalForm')?.addEventListener('submit',event=>{event.preventDefault();event.stopPropagation();submitForm(event.currentTarget);});
+  root.querySelector('input,select,button')?.focus();
+}
+const field=(label,name,type='text',value='',extra='',full='')=>`<div class="field ${full}"><label for="${h(name)}">${h(label)}</label><input id="${h(name)}" name="${h(name)}" type="${h(type)}" value="${h(value)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" ${extra}></div>`;
+const selectField=(label,name,options,full='')=>`<div class="field ${full}"><label for="${h(name)}">${h(label)}</label><select id="${h(name)}" name="${h(name)}">${options.map(o=>`<option value="${h(o[0])}">${h(o[1])}</option>`).join('')}</select></div>`;
+function closeModal(){ $('#modalRoot').innerHTML='';modalReturnFocus?.focus?.();modalReturnFocus=null; }
+function modalError(message){ $('#modalError').innerHTML=`<div class="warning-box">${h(message)}</div>`; }
+function downloadExport(data){const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='debt-recovery-system-export.json';a.click();URL.revokeObjectURL(a.href);}
+
+function actionModal(action,id){
+  clearNotice();
+  const type=state.page;
+  if(action==='add-income'){const openExpected=state.expected.filter(x=>x.status==='Expected'),sources=[...(openExpected.length?[['expected','Expected income plan']]:[]),['Salary','Salary'],['Freelance','Freelance'],['Business','Business'],['Gift','Gift'],['Other income','Other income']],expected=openExpected[0];return openModal({title:'Record income received',subtitle:'This income will use the current allocation percentages.',form:'income',submit:'Review allocation',body:`<div class="form-grid">${field('Date received','date','date',TODAY,'required')}${selectField('Income source','source',sources)}<div class="full" data-income-description>${expected?expectedIncomeSelect(openExpected):fieldControl('Description','description','text','','required')}</div>${field('Amount','amount','number',expected?.amount||'','min="0.01" step="0.01" required','full')}</div><div class="breakdown-box">${state.allocations.map(a=>`<div class="breakdown-row"><span>${a.name} · ${a.percentage}%</span><b>Calculated after amount is entered</b></div>`).join('')}</div>`});}
+  if(action==='add-funds') return openModal({title:`Add funds to ${labelFor(type)}`,subtitle:'This goes only to this page and will not be auto-allocated.',form:'add-funds',body:`<div class="warning-box">To distribute income across categories, use Add Income on the Income page.</div><div class="form-grid">${field('Date','date','date',TODAY,'required')}${selectField('Source','source',[['Freelance','Freelance'],['Business','Business'],['Gift','Gift'],['Other','Other']])}${field('Amount','amount','number','','min="0.01" step="0.01" required')}${field('Note','note','text','','','full')}</div>`});
+  if(action==='record-expense') return expenseModal();
+  if(action==='log-expense') return expenseModal(id);
+  if(action==='pay-bill'){ const b=state.bills.find(x=>x.id===id),actual=b.actual||b.plan,paid=Math.max(actual-Number(b.paid||0),0); return openModal({title:`Pay ${b.name}`,subtitle:'Record the actual bill and any payment made.',form:'pay-bill',body:`<input type="hidden" name="id" value="${h(id)}"><div class="form-grid">${field('Payment date','date','date',TODAY,'required')}${field('Planned amount','plannedAmount','number',b.plan,'readonly')}${field('Actual amount','actualAmount','number',actual,'min="0" step="0.01" required')}${field('Paid amount','paidAmount','number',paid,'min="0" step="0.01" required')}</div><label class="settle-check ${paid!==Number(b.plan)?'show':''}" data-settle-check><input type="checkbox" name="settlesFull"><span><b>This payment settles the bill in full</b><small>Confirm this when the paid amount differs from the planned amount.</small></span></label>`}); }
+  if(action==='goal-details')return goalDetails(id);
+  if(action==='view-all-goals')return allGoalsModal();
+  if(action==='goal-filter'){goalFilter=id||'progress';return allGoalsModal();}
+  if(action==='edit-goal'){const g=state.goals[type].find(x=>x.id===id);if(!g)return;closeModal();const options=[['target','Target amount'],['sinking','Sinking fund'],['continuous','Continuous / no target']].map(([value,label])=>`<option value="${value}" ${g.type===value?'selected':''}>${label}</option>`).join('');return openModal({title:`Edit ${g.name}`,subtitle:'Update the goal information without changing its current balance or activity.',form:'edit-goal',body:`<input type="hidden" name="id" value="${h(g.id)}"><div class="form-grid">${field('Goal name','name','text',g.name,'required','full')}<div class="field"><label for="goalType">Goal type</label><select id="goalType" name="goalType">${options}</select></div>${field('Target amount','target','number',g.type==='continuous'?'':g.target,'min="0" step="0.01"')}</div>`});}
+  if(action==='delete-goal'){const g=state.goals[type].find(x=>x.id===id);if(!g)return;return openModal({title:`Delete ${g.name}?`,subtitle:'Remove this goal from your active goals.',form:'delete-goal',submit:'Delete goal',body:`<input type="hidden" name="id" value="${h(g.id)}"><div class="warning-box">${g.balance>0?`${money(g.balance)} will be returned to Available ${labelFor(type)}.`:'This goal has no reserved funds.'} Its activity will remain in your history${(state.goalAchievements||[]).some(x=>x.goalId===g.id)?', including its achieved record':''}.</div>`});}
+  if(action==='allocate-goal'){ const g=state.goals[type].find(x=>x.id===id); return openModal({title:`Allocate to ${g.name}`,subtitle:`Available Power ${labelFor(type)}: ${money(state.funds[type])}`,form:'allocate-goal',body:`<input type="hidden" name="id" value="${id}"><div class="form-grid">${field('Date','date','date',TODAY,'required')}${field('Amount','amount','number','','min="0.01" step="0.01" required')}</div>`}); }
+  if(action==='use-funds'){ const goals=state.goals[type]||[],selected=goals.find(g=>g.id===id),options=[]; if(selected)options.push([selected.id,`${selected.name} · ${money(selected.balance)}`]); if(state.funds[type]>0)options.push(['pool',`Available ${labelFor(type)} · ${money(state.funds[type])}`]); goals.filter(g=>g.id!==id).forEach(g=>options.push([g.id,`${g.name} · ${money(g.balance)}`])); return openModal({title:`Use ${labelFor(type)} funds`,subtitle:'Choose the exact source of the funds.',form:'use-funds',body:`<div class="form-grid">${field('Date','date','date',TODAY,'required')}${selectField('Use funds from','source',options)}${field('Amount','amount','number','','min="0.01" step="0.01" required')}${field('Purpose','note','text','','required','full')}</div>`}); }
+  if(action==='new-goal') return openModal({title:`Create ${labelFor(type)} goal`,subtitle:'Choose a target, sinking fund, or continuous fund.',form:'new-goal',body:`<div class="form-grid">${field('Goal name','name','text','','required','full')}${selectField('Goal type','goalType',[['target','Target amount'],['sinking','Sinking fund'],['continuous','Continuous / no target']])}${field('Target amount','target','number','','min="0" step="0.01"')}</div>`});
+  if(action==='record-payment'){ const selected=openDebts().find(d=>d.id===id),options=openDebts().map(d=>[d.id,`${d.creditor} · ${money(d.balance)}`]),debtControl=selected?`<input type="hidden" name="debtId" value="${h(selected.id)}">`:`${selectField('Debt account','debtId',options)}`,remainingDue=selected?Math.max(debtDueThrough(selected,TODAY),debtRemaining(selected)):'',summary=selected?`<div class="breakdown-box"><div class="breakdown-row"><span>Current balance:</span><b>${money(selected.balance)}</b></div><div class="breakdown-row"><span>Interest:</span><b>${h(interestLabel(selected))}</b></div><div class="breakdown-row"><span>Due date:</span><b>${selected.dueDate?fullDate(selected.dueDate):'Flexible'}</b></div><div class="breakdown-row"><span>Scheduled payment:</span><b>${selected.payment?money(selected.payment):'Flexible'}</b></div></div>`:''; return openModal({title:selected?selected.creditor:'Record debt payment',subtitle:`Available Debt funds: ${money(state.funds.debt)}`,form:'debt-payment',body:`${summary}<div class="form-grid">${field('Payment date','date','date',TODAY,'required')}${debtControl}${field('Payment amount','amount','number',remainingDue,'min="0.01" step="0.01" required')}${field('Other fees (bank or transfer fees)','otherFees','number','0','min="0" step="0.01" required')}${field('Note','note','text','','','full')}</div><div class="recovery-message">Other fees reduce your available Debt funds only. They are not deducted from the debt principal.</div>`}); }
+  if(action==='add-debt') return addDebtModal();
+  if(action==='debt-history') return debtHistory(id);
+  if(action==='update-debt'){
+    const d=state.debts.find(x=>x.id===id); closeModal();
+    return openModal({title:`Update ${d.creditor}`,subtitle:'Changes apply from the effective date and do not rewrite earlier history.',form:'update-debt',wide:true,body:`<input type="hidden" name="id" value="${id}"><input type="hidden" name="paymentFrequency" value="${h(d.paymentFrequency||'monthly')}"><div class="form-grid">${field('Effective date','date','date',TODAY,'required')}${selectField('Reason','reason',[['agreement','Agreement change'],['negotiated','Negotiated reduction'],['correction','Correction of incorrect entry']])}${field('Current balance','balance','number',d.balance,'min="0" step="0.01" required')}${field('Payment amount','payment','number',d.payment,'min="0" step="0.01" required')}${field('Next due date','dueDate','date',d.dueDate,'required')}${d.paymentFrequency==='twice_monthly'?field('Following due date','dueDateSecondary','date',d.dueDateSecondary,'required'):''}${selectField('Status','status',d.status==='Paused'?[['Paused','Payments paused — interest may continue'],['Upcoming','Active / upcoming']]:[['Upcoming','Active / upcoming'],['Paused','Payments paused — interest may continue']])}${selectField('Interest setup','interestMode',[[d.interestMode,interestLabel(d)],...[['none','No interest'],['included','Interest included in total'],['percentage','Separate percentage interest'],['fixed','Exact fixed interest amount']].filter(x=>x[0]!==d.interestMode)])}${selectField('Interest frequency','frequency',[[d.interestFrequency,d.interestFrequency[0].toUpperCase()+d.interestFrequency.slice(1)],...[['monthly','Monthly'],['weekly','Weekly'],['daily','Daily']].filter(x=>x[0]!==d.interestFrequency)])}${field('Interest rate or fixed amount','interestValue','number',d.interestValue,'min="0" step="0.01"')}</div><div class="recovery-message">Percentage interest is calculated from the current remaining balance on each interest date.</div>`});
   }
-  .grid-2 .goal-row {
-    grid-template-columns: minmax(0,1.2fr) minmax(90px,.75fr) minmax(72px,auto) auto;
-    gap: 12px;
+  if(action==='archive-debt'){
+    const d=state.debts.find(x=>x.id===id);
+    if(!d||d.balance>.001){ closeModal(); return notice('Only a fully paid debt can be archived.',true); }
+    if(window.DRS_API?.live){closeModal();window.DRS_API.request('/api/debts/archive',{method:'POST',body:JSON.stringify({debtId:id})}).then(()=>hydrateLive()).then(render).then(()=>notice(`${d.creditor} was archived as fully paid.`)).catch(error=>notice(error.message,true));return;}
+    state.archivedDebts=state.archivedDebts||[]; state.archivedDebts.push(d); state.debts=state.debts.filter(x=>x.id!==id);
+    addActivity('debt','archive',`Paid debt archived · ${d.creditor}`,'Closure only; no Recovery adjustment',0,TODAY); saveState(); closeModal(); render(); return notice(`${d.creditor} was archived as fully paid.`);
   }
-  .grid-2 .list-row > *,
-  .grid-2 .goal-row > * { min-width: 0; }
-  .grid-2 .row-actions { min-width: max-content; }
-  .grid-2 .button-secondary,
-  .grid-2 .button-ghost { max-width: 100%; }
+  if(action==='move-funds') return openModal({title:'Move funds',subtitle:'Transfer existing money between categories.',form:'transfer',body:`<div class="form-grid">${field('Date','date','date',TODAY,'required')}${selectField('From category','from',state.allocations.map(a=>[a.key,`${a.name} · ${money(state.funds[a.key])}`]))}${selectField('To category','to',state.allocations.map(a=>[a.key,a.name]))}${field('Amount','amount','number','','min="0.01" step="0.01" required')}</div>`});
+  if(action==='journey-details') return journeyDetails();
+  if(action==='edit-recovery') return openModal({title:'Edit recovery goal',subtitle:'Journey Start and Starting Debt remain fixed.',form:'recovery-goal',body:`<div class="form-grid">${field('Target balance','targetBalance','number',state.journey.targetBalance,'min="0" step="0.01" required')}${field('Target date','targetDate','date',state.journey.targetDate,'')}</div>`});
+  if(action==='allocation-settings'){if(state.page!=='income')return go('income');return allocationModal();}
+  if(action==='start-journey') return openModal({title:'Start Recovery Journey',subtitle:'This permanently fixes the journey start and starting debt. Later debts will be recorded as Debt Added.',form:'start-journey',submit:'Confirm journey start',body:`<div class="form-grid">${field('Journey date','date','date',TODAY,'required')}${field('Target balance','targetBalance','number','0','min="0" step="0.01" required')}${field('Target date','targetDate','date','','','full')}</div><div class="breakdown-box"><div class="breakdown-row total"><span>Starting debt at confirmation</span><b>${money(currentDebt())}</b></div></div><div class="warning-box">Confirm only after all current debts are recorded.</div>`});
+  if(action==='income-breakdown') return incomeBreakdown(id);
+  if(action==='view-activity') return allActivity(id);
+  if(action==='manage-income') return openModal({title:'Add expected income',subtitle:'Plan a future salary or other income. This does not add funds until received.',form:'expected-income',body:`<div class="form-grid">${field('Expected date','date','date',TODAY,'required')}${selectField('Source','source',[['Salary','Salary'],['Freelance','Freelance'],['Business','Business'],['Other income','Other income']])}${field('Plan name','name','text','','required')}${field('Expected amount','amount','number','','min="0.01" step="0.01" required')}</div>`});
+  if(action==='edit-expected'){const item=state.expected.find(x=>x.id===id);if(!item)return;return openModal({title:`Edit ${item.name}`,subtitle:'Editing a plan does not add funds.',form:'expected-income-update',body:`<input type="hidden" name="id" value="${h(id)}"><div class="form-grid">${field('Expected date','date','date',item.date,'required')}${selectField('Source','source',[['Salary','Salary'],['Freelance','Freelance'],['Business','Business'],['Other income','Other income']])}${field('Plan name','name','text',item.name,'required')}${field('Expected amount','amount','number',item.amount,'min="0.01" step="0.01" required')}</div>`});}
+  if(action==='cancel-expected'){const item=state.expected.find(x=>x.id===id);if(!item)return;return openModal({title:`Cancel ${item.name}?`,subtitle:'The plan will remain in history and will not be included in the forecast.',form:'expected-income-cancel',submit:'Cancel plan',body:`<input type="hidden" name="id" value="${h(id)}"><div class="warning-box">No money will be removed because expected income is planning only.</div>`});}
+  if(action==='receive-expected'){const item=state.expected.find(x=>x.id===id);return openModal({title:`Receive ${item.name}`,subtitle:'The actual amount will be allocated using the percentages effective on the received date.',form:'receive-expected',submit:'Receive and allocate',body:`<input type="hidden" name="id" value="${id}"><div class="form-grid">${field('Date received','date','date',TODAY,'required')}${field('Actual amount','amount','number',item.amount,'min="0.01" step="0.01" required')}</div>`});}
+  if(action==='manage-budget-plans') return openModal({title:'Manage Monthly Spending',subtitle:'Add, update, or archive monthly spending plans.',form:'budget-plans',wide:true,body:`<div class="cost-table" id="costRows">${budgetPlanRows()}</div><button type="button" class="button-secondary add-cost-row" data-action="add-budget-row">+ Add row</button>`});
+  if(action==='manage-bill-plans') return openModal({title:'Manage Bills',subtitle:'Maintain billers and their regular payment schedules.',form:'bill-plans',wide:true,body:`<div class="cost-table" id="costRows">${billPlanRows()}</div><button type="button" class="button-secondary add-cost-row" data-action="add-bill-row">+ Add row</button>`});
+  if(action==='manage-bills') return openModal({title:'Add or update a bill plan',subtitle:'The bill stays due until a payment is recorded.',form:'bill-plan',body:`<div class="form-grid">${field('Bill name','name','text','','required')}${field('Monthly plan','plan','number','','min="0.01" step="0.01" required')}${field('Due day','dueDay','number','','min="1" max="31" required')}${field('Current actual amount','actual','number','','min="0" step="0.01" required')}</div>`});
+  if(action==='manage-budgets') return openModal({title:'Set a monthly spending budget',subtitle:'Create or update an everyday spending category.',form:'budget-plan',body:`<div class="form-grid">${field('Budget name','name','text','','required')}${field('Monthly amount','plan','number','','min="0.01" step="0.01" required')}</div>`});
+  if(action==='view-debts'){const paid=state.debts.filter(d=>debtTiming(d)==='paid'),paused=state.debts.filter(d=>d.status==='Paused'&&Number(d.balance)>0),active=openDebts().filter(d=>d.status!=='Paused');return openModal({title:'All debt accounts',subtitle:`${state.debts.length} total · ${active.length} active · ${paused.length} paused · ${paid.length} paid`,form:'noop',wide:true,submit:'Close',body:debtAccountsView([...active,...paused,...paid],true)});}
+  if(action==='milestones-all') return openModal({title:'Wins and recovery milestones',subtitle:'Only meaningful recovery progress is shown here.',form:'noop',wide:true,submit:'Close',body:`${winsHtml()}<div style="height:18px"></div>${recoveryTimeline()}`});
+  if(action==='attention-all'){const items=attentionItems();return openModal({title:'Needs attention',subtitle:'Items requiring review before the month is settled.',form:'noop',wide:true,submit:'Close',body:items.length?`<div class="attention-detail-list">${items.map(x=>`<div class="attention-detail"><div><span class="attention-code">${h(x.severity)} · ${h(x.category)}</span><span class="row-title">${h(x.name)}</span><span class="row-subtitle">${h(x.detail)} ${h(x.impact)}</span></div><div><span class="amount">${money(x.amount)}</span><span class="row-subtitle">${x.due?`Due ${shortDate(x.due)}`:'No due date'}</span></div><button type="button" class="button-secondary" data-action="${x.action}" data-id="${h(x.id)}">Review</button></div>`).join('')}</div>`:'<div class="empty">Nothing needs attention right now.</div>'});}
+  if(action==='delete-ledger'){const entry=state.activities.find(x=>x.id===id);if(!entry)return;return openModal({title:'Delete ledger entry',subtitle:'The original entry will remain visible and a linked reversal will correct its financial effect.',form:'reverse-ledger',submit:'Delete and reverse',body:`<input type="hidden" name="id" value="${h(id)}"><div class="warning-box">${entry.type==='allocation'?'This reverses the received income and all linked category allocations.':entry.type==='transfer'?'This reverses both sides of the transfer.':'This creates an auditable reversal; it does not erase history.'}</div><div class="form-grid">${field('Reversal date','date','date',TODAY,'required')}${field('Required note','note','text','','required minlength="3"','full')}</div>`});}
+  if(action==='logout'){if(!window.DRS_API?.live)return notice('Log out is available when connected to the live service.',true);window.DRS_API.request('/api/auth/logout',{method:'POST',body:'{}'}).then(()=>location.reload()).catch(error=>notice(error.message,true));return;}
+  if(action==='export-data'){ if(window.DRS_API?.live){window.DRS_API.request('/api/account/export').then(downloadExport).catch(error=>notice(error.message,true));return;} downloadExport(state);return; }
+  notice('This control is included in the Build and its detailed management view is being validated.');
 }
+function expenseModal(id=''){ const budget=state.budgets.find(b=>b.id===id); openModal({title:budget?`Log ${budget.name} expense`:'Record an unlisted expense',subtitle:'This reduces available Living Expenses funds.',form:'expense',body:`<input type="hidden" name="budgetId" value="${id}"><div class="form-grid">${field('Expense date','date','date',TODAY,'required')}${field('Amount','amount','number','','min="0.01" step="0.01" required')}${field('Description','description','text',budget?.name||'','required','full')}</div>`}); }
+function fieldControl(label,name,type='text',value='',attrs=''){return `<div class="field"><label for="${h(name)}">${h(label)}</label><input id="${h(name)}" type="${h(type)}" name="${h(name)}" value="${h(value)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" ${attrs}></div>`;}
+function expectedIncomeSelect(items){return `<div class="field"><label for="expectedIncomeId">Expected income</label><select id="expectedIncomeId" name="expectedIncomeId" required>${items.map(x=>`<option value="${h(x.id)}" data-amount="${h(x.amount)}">${h(x.name)} · ${shortDate(x.date)} · ${money(x.amount)}</option>`).join('')}</select></div>`;}
+function addDebtModal(){ openModal({title:'Add debt',subtitle:'Record the principal and current payment arrangement.',form:'add-debt',wide:true,body:`<div class="form-grid debt-form-grid">${field('Creditor / account','creditor','text','','required')}${field('Principal debt','balance','number','','min="0.01" step="0.01" required')}${selectField('Arrangement','arrangement',[['one_time','One-Time Payment'],['monthly','Monthly'],['twice_monthly','Twice a Month'],['weekly','Weekly'],['daily','Daily']])}${selectField('Status','status',[['Upcoming','Active / upcoming'],['Paused','Payments paused — interest may continue']])}<section class="debt-form-section full"><div class="debt-form-section-heading"><h3>Payment schedule</h3><p>Enter when the agreed payment is due.</p></div><div class="form-grid debt-schedule-grid">${field('First agreement due','dueDate','date',TODAY,'required')}<div class="field" data-secondary-debt-due hidden><label for="dueDateSecondary">Second agreement due</label><input id="dueDateSecondary" name="dueDateSecondary" type="date" disabled></div><div data-recurring-debt-fields hidden>${field('Scheduled payment per due date','payment','number','','min="0.01" step="0.01" required disabled')}</div></div></section><section class="debt-form-section full recurring-debt-fields" data-recurring-debt-fields hidden><div class="debt-form-section-heading"><h3>Interest</h3><p>Use No interest if no separate interest is charged.</p></div><div class="debt-interest-grid">${selectField('Interest setup','interestMode',[['none','No interest'],['included','Interest included in total'],['percentage','Separate percentage interest'],['fixed','Exact fixed interest amount']])}${field('Interest % or fixed amount','interestValue','number','0','min="0" step="0.01" disabled')}${selectField('Interest frequency','frequency',[['monthly','Monthly'],['weekly','Weekly'],['daily','Daily']])}</div></section></div><div class="warning-box">For a one-time arrangement, the full principal is scheduled for the agreement due date. For twice-a-month arrangements, the scheduled payment applies on each of the two due dates.</div>`}); }
+async function debtHistory(id){
+  const d=state.debts.find(x=>x.id===id);if(!d)return;
+  let raw=null;if(window.DRS_API?.live){try{raw=await window.DRS_API.request(`/api/debts/${encodeURIComponent(id)}/history`);}catch(error){notice(error.message,true);}}
+  const mappedRows=activitiesFor('debt').filter(a=>a.relatedId===id||a.title.includes(d.creditor)),rawRows=raw?.activity||[];
+  const totalPaid=rawRows.length?Math.abs(rawRows.filter(a=>a.entry_type==='debt_payment').reduce((s,a)=>s+Number(a.amount_minor),0))/100:Math.abs(mappedRows.filter(a=>a.type==='payment').reduce((s,a)=>s+Number(a.amount),0));
+  const interestAdded=rawRows.length?rawRows.filter(a=>a.entry_type==='interest').reduce((s,a)=>s+Number(a.amount_minor),0)/100:mappedRows.filter(a=>a.type==='interest').reduce((s,a)=>s+Number(a.amount),0);
+  const negotiated=rawRows.length?Math.abs(rawRows.filter(a=>a.entry_type==='negotiated_reduction').reduce((s,a)=>s+Number(a.amount_minor),0))/100:Math.abs(mappedRows.filter(a=>a.type==='negotiated').reduce((s,a)=>s+Number(a.amount),0));
+  const corrections=rawRows.length?rawRows.filter(a=>a.entry_type==='balance_correction').reduce((s,a)=>s+Number(a.amount_minor),0)/100:mappedRows.filter(a=>a.type==='correction').reduce((s,a)=>s+Number(a.amount),0);
+  const addedEntry=rawRows.find(a=>a.entry_type==='new_debt')||mappedRows.find(a=>a.type==='new-debt'),starting=addedEntry?(rawRows.length?Number(addedEntry.amount_minor)/100:Number(addedEntry.amount)):Math.max(Number(d.starting||0),Number(d.balance)+totalPaid-interestAdded-negotiated-corrections),progress=starting>0?Math.min(100,Math.max(0,(starting-Number(d.balance))/starting*100)):0;
+  const projection=payoffProjection(d),editable=Number(d.balance)>0&&d.status!=='Archived',created=(raw?.debt?.created_at||d.created||'').slice(0,10),rows=rawRows.length?rawRows.map(a=>({id:a.id,date:a.occurred_on,category:'debt',type:({debt_payment:'payment',new_debt:'new-debt',negotiated_reduction:'negotiated',balance_correction:'correction'}[a.entry_type]||a.entry_type.replaceAll('_','-')),title:a.description,detail:'Recorded in your financial ledger',amount:Number(a.amount_minor)/100})):mappedRows;
+  const summaryRows=[['Date Added',fullDate(created)],['Starting Balance',money(starting)],['Current Balance',money(d.balance)],['Total Paid',money(totalPaid)],['Interest Added',money(interestAdded)],...(negotiated>0?[['Negotiated Reductions',money(negotiated)]]:[]),...(corrections!==0?[['Corrections',`${corrections>0?'+':''}${money(corrections)}`]]:[]),['Status',d.status]];
+  const agreementRows=[['Scheduled Payment',`${money(d.payment)} · ${h(arrangementLabel(d.paymentFrequency))}`],['Next Due',d.dueDate?fullDate(d.dueDate):'No due date'],['Interest Terms',interestLabel(d)],['Estimated Payments Left',projection.payments],['Estimated Payoff',projection.date]];
+  openModal({title:d.creditor,subtitle:'Account history, current agreement, and payoff outlook.',form:'noop',wide:true,submit:'Close',body:`<div class="debt-detail-actions">${editable?`<button type="button" class="button" data-action="record-payment" data-id="${h(d.id)}">Pay debt</button><button type="button" class="button-secondary" data-action="update-debt" data-id="${h(d.id)}">Update agreement</button>`:''}${d.balance<=.001&&d.status!=='Archived'?`<button type="button" class="button-ghost" data-action="archive-debt" data-id="${h(d.id)}">Archive paid debt</button>`:''}</div><div class="debt-detail-columns"><section><h3>Account Summary</h3>${summaryRows.map(([label,value])=>`<div class="debt-detail-row"><span>${h(label)}:</span><strong>${value}</strong></div>`).join('')}<div class="debt-detail-progress">${track(progress,100)}<small>${progress.toFixed(0)}% of starting balance reduced</small></div></section><section><h3>Current Agreement</h3>${agreementRows.map(([label,value])=>`<div class="debt-detail-row"><span>${h(label)}:</span><strong>${value}</strong></div>`).join('')}<p class="projection-note">Estimate assumes the current payment and interest terms continue without missed payments or new adjustments.</p></section></div><h3 class="debt-activity-heading">Account Activity</h3><div class="activity-list">${rows.length?rows.map(a=>activityRow(a,false)).join(''):'<div class="empty">No account-specific history yet.</div>'}</div>`});
+}
+function payoffProjection(d){const balance=Number(d.balance),payment=Number(d.payment);if(!(balance>0))return {payments:'0',date:'Paid'};if(!(payment>0)||d.status==='Paused'||!d.dueDate)return {payments:'Not available',date:'Not available'};let remaining=balance,count=0,paymentDate=d.dueDate,secondary=d.dueDateSecondary||'',interestDate=['percentage','fixed'].includes(d.interestMode)?(d.interestAnchorDate||d.dueDate):'';while(remaining>0&&count<1200&&paymentDate){while(interestDate&&interestDate<=paymentDate){if(d.interestMode==='fixed')remaining+=Number(d.interestValue||0);else remaining+=remaining*Number(d.interestValue||0)/100;interestDate=advanceProjectionDate(interestDate,d.interestFrequency||'monthly');}remaining-=payment;count++;if(remaining<=0)return {payments:String(count),date:fullDate(paymentDate)};if(d.paymentFrequency==='one_time')return {payments:'Not achievable',date:'One-time payment does not clear balance'};if(d.paymentFrequency==='twice_monthly'){const previous=paymentDate;paymentDate=secondary;secondary=advanceProjectionDate(previous,'monthly');}else paymentDate=advanceProjectionDate(paymentDate,d.paymentFrequency||'monthly');}return {payments:'More than 1,200',date:'Not available'};}
+function advanceProjectionDate(date,frequency){const value=new Date(`${date}T00:00:00Z`);if(frequency==='daily'){value.setUTCDate(value.getUTCDate()+1);return value.toISOString().slice(0,10);}if(frequency==='weekly'){value.setUTCDate(value.getUTCDate()+7);return value.toISOString().slice(0,10);}const [year,month,day]=date.split('-').map(Number),currentLast=new Date(Date.UTC(year,month,0)).getUTCDate(),nextMonth=month===12?1:month+1,nextYear=month===12?year+1:year,nextLast=new Date(Date.UTC(nextYear,nextMonth,0)).getUTCDate();return `${nextYear}-${String(nextMonth).padStart(2,'0')}-${String(day===currentLast?nextLast:Math.min(day,nextLast)).padStart(2,'0')}`;}
+function journeyDetails(){ openModal({title:'Recovery journey details',subtitle:'Starting balances stay fixed; current balances continue to move.',form:'noop',wide:true,submit:'Close',body:`<table class="debt-table"><thead><tr><th>Debt at journey start</th><th class="amount">Starting</th><th class="amount">Current</th><th class="amount">Progress</th></tr></thead><tbody>${state.debts.map(d=>`<tr><td>${d.creditor}</td><td class="amount">${money(d.starting)}</td><td class="amount">${money(d.balance)}</td><td class="amount ${d.balance<=d.starting?'positive':'negative'}">${money(d.starting-d.balance)}</td></tr>`).join('')}</tbody></table>`}); }
+function allocationModal(){ openModal({title:'Manage allocation percentages',subtitle:'Changes apply to future income only. Previous allocations will not be recalculated.',form:'allocations',body:`<div class="form-grid">${state.allocations.map(a=>field(`${a.name} percentage`,a.key,'number',a.percentage,'min="0" max="100" step="0.01" required')).join('')}</div><div class="warning-box">Allocation percentages must total exactly 100%.</div>`}); }
+function budgetPlanRow(p={}){return `<div class="cost-row budget-plan-row" data-cost-row><input type="hidden" data-key="id" value="${h(p.id||'')}"><label>Name<input data-key="name" value="${h(p.name||'')}" autocomplete="off" required></label><label>Monthly amount<input data-key="amount" type="number" min="0.01" step="0.01" value="${h(p.plan||'')}" autocomplete="off" required></label><label>Status<select data-key="active"><option value="true" ${p.active!==false?'selected':''}>Active</option><option value="false" ${p.active===false?'selected':''}>Archived</option></select></label></div>`;}
+function budgetPlanRows(){const plans=(state.costPlans||[]).filter(x=>x.type==='budget');return plans.length?plans.map(budgetPlanRow).join(''):state.budgets.length?state.budgets.map(x=>budgetPlanRow({...x,active:true})).join(''):budgetPlanRow();}
+function billPlanRow(p={}){const frequency=p.frequency||'monthly';return `<div class="cost-row bill-plan-row" data-cost-row><input type="hidden" data-key="id" value="${h(p.id||'')}"><label>Biller<input data-key="biller" value="${h(p.name||'')}" autocomplete="off" required></label><label>Amount<input data-key="amount" type="number" min="0.01" step="0.01" value="${h(p.plan||'')}" autocomplete="off" required></label><label>Due day<input data-key="dueDay" type="number" min="1" max="31" value="${h(p.dueDay||'')}" autocomplete="off" required></label><label class="secondary-due ${frequency==='twice_monthly'?'show':''}">Second due day<input data-key="dueDaySecondary" type="number" min="1" max="31" value="${h(p.dueDaySecondary||'')}" autocomplete="off"></label><label>Frequency<select data-key="frequency"><option value="monthly" ${frequency==='monthly'?'selected':''}>Monthly</option><option value="twice_monthly" ${frequency==='twice_monthly'?'selected':''}>Twice a month</option><option value="weekly" ${frequency==='weekly'?'selected':''}>Weekly</option><option value="daily" ${frequency==='daily'?'selected':''}>Daily</option></select></label><label>Status<select data-key="active"><option value="true" ${p.active!==false?'selected':''}>Active</option><option value="false" ${p.active===false?'selected':''}>Archived</option></select></label></div>`;}
+function billPlanRows(){const plans=(state.costPlans||[]).filter(x=>x.type==='bill');return plans.length?plans.map(billPlanRow).join(''):state.bills.length?state.bills.map(x=>billPlanRow({...x,active:true})).join(''):billPlanRow();}
+function incomeBreakdown(id){
+  const i=state.incomes.find(x=>x.id===id),historical=i.allocations?.length?i.allocations:state.allocations.map(a=>({key:a.key,name:a.name,percentage:a.percentage,amount:i.amount*a.percentage/100}));
+  openModal({title:`${i.description} allocation`,subtitle:`${shortDate(i.date)} · ${money(i.amount)}`,form:'noop',submit:'Close',body:`<div class="breakdown-box">${historical.map(a=>`<div class="breakdown-row"><span>${h(a.name||labelFor(a.key))} · ${Number(a.percentage)}%</span><b>${money(a.amount)}</b></div>`).join('')}<div class="breakdown-row total"><span>Total</span><b>${money(i.amount)}</b></div></div>`});
+}
+function allActivity(category=''){ const rows=activitiesFor(category); openModal({title:`${category?labelFor(category)+' ':''}Activity`,subtitle:'Complete chronological history. Reversed entries remain visible.',form:'noop',wide:true,submit:'Close',body:`<div class="activity-list">${rows.map(a=>activityRow(a,true)).join('')}</div>`}); }
 
-@media (min-width: 761px) and (max-width: 1120px) {
-  .grid-2 .list-row:not(.compact),
-  .grid-2 .goal-row { grid-template-columns: 1fr; align-items: start; }
-  .grid-2 .list-row:not(.compact) > *,
-  .grid-2 .goal-row > * { display: block; text-align: left; }
-  .grid-2 .row-actions { justify-content: flex-start; }
+async function submitForm(form){
+  const data=Object.fromEntries(new FormData(form).entries()), kind=form.dataset.form;
+  if(kind==='noop'){ closeModal(); return; }
+  if(kind==='income'){
+    const amount=Number(data.amount);if(!(amount>=.01))return modalError('Amount must be at least ₱0.01.');
+    const expected=state.expected.find(x=>x.id===data.expectedIncomeId&&x.status==='Expected'),description=expected?.name||data.description;
+    if(!description)return modalError('Choose an expected income plan or enter a description.');
+    return openModal({title:'Review income allocation',subtitle:'Nothing is saved until you confirm this allocation.',form:'income-confirm',submit:'Confirm and record income',body:`<input type="hidden" name="date" value="${h(data.date)}"><input type="hidden" name="source" value="${h(expected?.source||data.source)}"><input type="hidden" name="description" value="${h(description)}"><input type="hidden" name="expectedIncomeId" value="${h(expected?.id||'')}"><input type="hidden" name="amount" value="${h(data.amount)}"><div class="breakdown-box">${state.allocations.map(a=>`<div class="breakdown-row"><span>${h(a.name)} · ${a.percentage}%</span><b>${money(amount*a.percentage/100)}</b></div>`).join('')}<div class="breakdown-row total"><span>Total</span><b>${money(amount)}</b></div></div>`});
+  }
+  if(kind==='debt-payment'){
+    const debt=state.debts.find(x=>x.id===data.debtId),amount=Number(data.amount),due=debt?debtDueThrough(debt,data.date||TODAY):0,excess=Math.max(amount-due,0);
+    if(excess>.001)return openModal({title:'How should the excess payment be applied?',subtitle:`${money(amount)} payment · ${money(due)} currently due · ${money(excess)} excess`,form:'debt-payment-confirm',submit:'Confirm payment',body:`<input type="hidden" name="date" value="${h(data.date)}"><input type="hidden" name="debtId" value="${h(data.debtId)}"><input type="hidden" name="amount" value="${h(data.amount)}"><input type="hidden" name="otherFees" value="${h(data.otherFees||0)}"><input type="hidden" name="note" value="${h(data.note||'')}"><div class="choice-list"><label class="choice-card"><input type="radio" name="excessTreatment" value="principal" checked><span><b>Deduct from principal</b><small>The ${money(excess)} excess immediately reduces the principal balance.</small></span></label><label class="choice-card"><input type="radio" name="excessTreatment" value="advance"><span><b>Advance to the next due date</b><small>The ${money(excess)} excess becomes a payment credit and does not immediately reduce principal.</small></span></label></div>`});
+  }
+  if(kind==='debt-payment-confirm'&&data.excessTreatment==='principal'){
+    const debt=state.debts.find(x=>x.id===data.debtId);
+    if(debt?.interestMode==='percentage'&&!data.futureInterestBasis)return openModal({title:'How should future interest be computed?',subtitle:'This choice will apply to the next interest cycles for this creditor.',form:'debt-interest-basis-confirm',submit:'Confirm and save payment',body:`<input type="hidden" name="date" value="${h(data.date)}"><input type="hidden" name="debtId" value="${h(data.debtId)}"><input type="hidden" name="amount" value="${h(data.amount)}"><input type="hidden" name="otherFees" value="${h(data.otherFees||0)}"><input type="hidden" name="note" value="${h(data.note||'')}"><input type="hidden" name="excessTreatment" value="principal"><div class="choice-list"><label class="choice-card"><input type="radio" name="futureInterestBasis" value="original" checked><span><b>Use the original principal</b><small>Future interest continues to use the originally logged balance.</small></span></label><label class="choice-card"><input type="radio" name="futureInterestBasis" value="remaining"><span><b>Use the new principal balance</b><small>Future interest uses the balance after this principal payment.</small></span></label></div>`});
+  }
+  if(['cost-plans','budget-plans','bill-plans'].includes(kind))data.rows=[...form.querySelectorAll('[data-cost-row]')].map(row=>Object.fromEntries([...row.querySelectorAll('[data-key]')].map(input=>[input.dataset.key,input.dataset.key==='active'?input.value==='true':input.value])));
+  const persistKind=kind==='income-confirm'?(data.expectedIncomeId?'receive-expected':'income'):['debt-payment-confirm','debt-interest-basis-confirm'].includes(kind)?'debt-payment':kind;
+  if(window.DRS_API?.live){try{const submit=form.querySelector('[type="submit"]');if(submit)submit.disabled=true;await window.DRS_API.persist(persistKind,data,state.page);await hydrateLive();closeModal();render();notice(successMessage(persistKind));}catch(error){const submit=form.querySelector('[type="submit"]');if(submit)submit.disabled=false;modalError(error.message);}return;}
+  if(kind==='income-confirm'){
+    const expected=state.expected.find(x=>x.id===data.expectedIncomeId);if(expected){expected.status='Received';expected.amount=Number(data.amount);}
+    const amount=Number(data.amount), income={id:uid('i'),date:data.date,source:data.source,description:data.description,amount,allocated:true,allocations:state.allocations.map(a=>({key:a.key,name:a.name,percentage:a.percentage,amount:amount*a.percentage/100}))}; state.incomes.unshift(income); addActivity('income','income',`${data.description} received`,'Allocation breakdown recorded',amount,data.date);
+    state.allocations.forEach(a=>{ const allocated=amount*a.percentage/100; state.funds[a.key]+=allocated; addActivity(a.key,'allocation','Income allocation received',`${data.description} · ${a.percentage}%`,allocated,data.date); });
+    saveState(); closeModal(); render(); incomeBreakdown(income.id); return;
+  }
+  if(kind==='add-funds'){ const amount=Number(data.amount),type=state.page; state.funds[type]+=amount; addActivity(type,'funds',`Direct funds added to ${labelFor(type)}`,`${data.source}${data.note?' · '+data.note:''} · not auto-allocated`,amount,data.date); }
+  if(kind==='expense'){ const amount=Number(data.amount); if(amount>state.funds.living)return modalError(`Only ${money(state.funds.living)} is available in Living Expenses.`); state.funds.living-=amount; const b=state.budgets.find(x=>x.id===data.budgetId); if(b)b.spent+=amount; addActivity('living','expense',`${data.description} expense recorded`,b?'Monthly spending':'Unlisted expense',-amount,data.date); }
+  if(kind==='pay-bill'){ const b=state.bills.find(x=>x.id===data.id),actual=Number(data.actualAmount),amount=Number(data.paidAmount),settles=data.settlesFull==='on';if(amount>0&&amount!==Number(b.plan)&&!settles)return modalError('Confirm that this payment settles the bill because it differs from the planned amount.');if(amount>state.funds.living)return modalError(`Only ${money(state.funds.living)} is available.`);b.actual=actual;b.paid=Number(b.paid||0)+amount;b.status=settles||b.paid>=actual?'Paid':b.paid>0?'Partially paid':'Upcoming';if(amount>0){state.funds.living-=amount;addActivity('living','bill',`${b.name} bill paid`,'Bill payment',-amount,data.date);} }
+  if(kind==='allocate-goal'){ const type=state.page,g=state.goals[type].find(x=>x.id===data.id),amount=Number(data.amount); if(amount>state.funds[type])return modalError(`Only ${money(state.funds[type])} is available in ${labelFor(type)}.`); state.funds[type]-=amount; g.balance+=amount; addActivity(type,'goal',`Added to ${g.name}`,'From available funds',amount,data.date,g.id); if(g.target>0&&g.balance>=g.target&&!(state.goalAchievements||[]).some(x=>x.goalId===g.id)){state.goalAchievements=state.goalAchievements||[];state.goalAchievements.unshift({goalId:g.id,category:type,name:g.name,amount:g.target,achievedOn:data.date});} }
+  if(kind==='use-funds'){ const type=state.page,amount=Number(data.amount);let relatedId='';if(data.source==='pool'){ if(amount>state.funds[type])return modalError(`Only ${money(state.funds[type])} is available.`); state.funds[type]-=amount; } else { const g=state.goals[type].find(x=>x.id===data.source); if(amount>g.balance)return modalError(`Only ${money(g.balance)} is available in ${g.name}.`); g.balance-=amount;relatedId=g.id; } addActivity(type,'withdrawal','Funds used',`${data.note} · from ${data.source==='pool'?`Power ${labelFor(type)}`:state.goals[type].find(x=>x.id===data.source).name}`,-amount,data.date,relatedId); }
+  if(kind==='new-goal'){const id=uid('g');state.goals[state.page].push({id,name:data.name,type:data.goalType,target:data.goalType==='continuous'?0:Number(data.target||0),balance:0,created:TODAY});addActivity(state.page,'goal','New goal created',data.name,0,TODAY,id);}
+  if(kind==='edit-goal'){const g=state.goals[state.page].find(x=>x.id===data.id);if(g)Object.assign(g,{name:data.name,type:data.goalType,target:data.goalType==='continuous'?0:Number(data.target||0)});}
+  if(kind==='delete-goal'){const type=state.page,g=state.goals[type].find(x=>x.id===data.id);if(g){state.funds[type]+=Number(g.balance||0);state.goals[type]=state.goals[type].filter(x=>x.id!==g.id);addActivity(type,'goal',`Goal deleted · ${g.name}`,g.balance>0?`${money(g.balance)} returned to Available ${labelFor(type)}`:'No reserved funds',0,TODAY,g.id);}}
+  if(['debt-payment','debt-payment-confirm','debt-interest-basis-confirm'].includes(kind)){ const d=state.debts.find(x=>x.id===data.debtId),amount=Number(data.amount),due=debtDueThrough(d,data.date||TODAY),excess=Math.max(amount-due,0),advance=data.excessTreatment==='advance'?excess:0,principal=amount-advance; if(principal>d.balance)return modalError(`The principal payment exceeds the current balance of ${money(d.balance)}.`); if(amount+Number(data.otherFees||0)>state.funds.debt)return modalError(`Only ${money(state.funds.debt)} is available in Debt funds.`); d.balance-=principal;d.advanceCredit=Number(d.advanceCredit||0)+advance;if(data.futureInterestBasis)d.interestBasis=data.futureInterestBasis;state.funds.debt-=amount+Number(data.otherFees||0); addActivity('debt','payment',`Payment made · ${d.creditor}`,advance?`${money(advance)} credited to the next due date`:data.note||'Applied to scheduled payment and principal',-amount,data.date); if(d.balance<=.001){d.status='Paid';addActivity('debt','cleared',`Debt cleared · ${d.creditor}`,'Account fully paid',0,data.date);} }
+  if(kind==='add-debt'){ if(state.debts.some(d=>d.status!=='Archived'&&d.creditor.trim().toLowerCase()===data.creditor.trim().toLowerCase()))return modalError('An active debt already uses this creditor / agreement name. Add a distinguishing account or agreement label.');if(data.arrangement==='twice_monthly'&&(!data.dueDateSecondary||data.dueDateSecondary<=data.dueDate))return modalError('Choose a second agreement due date after the first due date.');const balance=Number(data.balance),oneTime=data.arrangement==='one_time',d={id:uid('d'),creditor:data.creditor,balance,starting:state.journey?0:balance,payment:oneTime?balance:Number(data.payment),paymentFrequency:data.arrangement,dueDate:data.dueDate,dueDateSecondary:data.arrangement==='twice_monthly'?data.dueDateSecondary:'',status:data.status,interestMode:oneTime?'none':data.interestMode,interestValue:oneTime?0:Number(data.interestValue),interestFrequency:oneTime?'monthly':data.frequency,paused:data.status==='Paused',created:TODAY}; state.debts.push(d); if(state.journey){state.recoveryPoints.push({date:TODAY,balance:currentDebt()});state.journey.noNewDebtSince=TODAY;} addActivity('debt','new-debt',`New debt added · ${d.creditor}`,'Recorded current balance',balance,TODAY); }
+  if(kind==='update-debt'){
+    const d=state.debts.find(x=>x.id===data.id),oldBalance=d.balance,newBalance=Number(data.balance),difference=newBalance-oldBalance;
+    d.balance=newBalance; d.payment=Number(data.payment); d.status=data.status; d.paused=data.status==='Paused'; d.interestMode=data.interestMode; d.interestFrequency=data.frequency; d.interestValue=Number(data.interestValue);
+    const type=data.reason==='negotiated'?'negotiated':data.reason==='correction'?'correction':'agreement';
+    const title=data.reason==='negotiated'?`Negotiated balance · ${d.creditor}`:data.reason==='correction'?`Balance correction · ${d.creditor}`:`Agreement updated · ${d.creditor}`;
+    addActivity('debt',type,title,data.reason==='negotiated'?`Formal balance reduction of ${money(Math.max(oldBalance-newBalance,0))}`:'Applied prospectively; earlier history unchanged',difference,data.date);
+    state.recoveryPoints.push({date:data.date,balance:currentDebt()});
+  }
+  if(kind==='transfer'){ const amount=Number(data.amount); if(data.from===data.to)return modalError('Choose two different categories.'); if(amount>state.funds[data.from])return modalError(`Only ${money(state.funds[data.from])} is available in ${labelFor(data.from)}.`); state.funds[data.from]-=amount; state.funds[data.to]+=amount; state.transfers.push({id:uid('t'),date:data.date,from:data.from,to:data.to,amount}); addActivity(data.from,'transfer',`Funds moved to ${labelFor(data.to)}`,`Transfer from ${labelFor(data.from)}`,-amount,data.date); addActivity(data.to,'transfer',`Funds received from ${labelFor(data.from)}`,`Transfer to ${labelFor(data.to)}`,amount,data.date); }
+  if(kind==='allocations'){ const vals=state.allocations.map(a=>Number(data[a.key])),total=vals.reduce((a,b)=>a+b,0); if(Math.abs(total-100)>.001)return modalError(`Percentages currently total ${total}%. They must total exactly 100%.`); state.allocations.forEach((a,i)=>a.percentage=vals[i]); }
+  if(kind==='expected-income'){ state.expected.push({id:uid('e'),date:data.date,name:data.name,source:data.source,amount:Number(data.amount),status:'Expected'}); }
+  if(kind==='expected-income-update'){const item=state.expected.find(x=>x.id===data.id);if(item)Object.assign(item,{date:data.date,name:data.name,source:data.source,amount:Number(data.amount)});}
+  if(kind==='expected-income-cancel'){const item=state.expected.find(x=>x.id===data.id);if(item)item.status='Cancelled';}
+  if(kind==='receive-expected'){const item=state.expected.find(x=>x.id===data.id),amount=Number(data.amount);item.status='Received';item.amount=amount;state.incomes.unshift({id:uid('i'),date:data.date,source:item.source,description:item.name,amount,allocated:true,allocations:state.allocations.map(a=>({key:a.key,name:a.name,percentage:a.percentage,amount:amount*a.percentage/100}))});state.allocations.forEach(a=>{const allocated=amount*a.percentage/100;state.funds[a.key]+=allocated;addActivity(a.key,'allocation','Income allocation received',`${item.name} · ${a.percentage}%`,allocated,data.date);});addActivity('income','income',`${item.name} received`,'Expected income finalized and allocated',amount,data.date);}
+  if(kind==='bill-plan'){
+    const existing=state.bills.find(b=>b.name.toLowerCase()===data.name.toLowerCase());
+    if(existing)Object.assign(existing,{plan:Number(data.plan),actual:Number(data.actual),dueDay:Number(data.dueDay),status:Number(data.actual)>Number(data.plan)?'Needs review':'Upcoming'});
+    else state.bills.push({id:uid('b'),name:data.name,plan:Number(data.plan),actual:Number(data.actual),dueDay:Number(data.dueDay),status:Number(data.actual)>Number(data.plan)?'Needs review':'Upcoming'});
+  }
+  if(kind==='budget-plan'){
+    const existing=state.budgets.find(b=>b.name.toLowerCase()===data.name.toLowerCase());
+    if(existing)existing.plan=Number(data.plan); else state.budgets.push({id:uid('m'),name:data.name,plan:Number(data.plan),spent:0});
+  }
+  if(kind==='recovery-goal'){ state.journey.targetBalance=Number(data.targetBalance); state.journey.targetDate=data.targetDate; }
+  if(kind==='cost-plans'){state.costPlans=data.rows.map((x,i)=>({...x,id:x.id||uid('p'),plan:Number(x.plan),dueDay:x.type==='bill'?Number(x.dueDay):'',active:Boolean(x.active)}));state.bills=state.costPlans.filter(x=>x.type==='bill'&&x.active).map(p=>({...p,actual:state.bills.find(b=>b.id===p.id)?.actual||0,paid:state.bills.find(b=>b.id===p.id)?.paid||0,status:state.bills.find(b=>b.id===p.id)?.status||'Not recorded'}));state.budgets=state.costPlans.filter(x=>x.type==='budget'&&x.active).map(p=>({...p,spent:state.budgets.find(b=>b.id===p.id)?.spent||0}));}
+  if(kind==='budget-plans'){const others=(state.costPlans||[]).filter(x=>x.type!=='budget');const plans=data.rows.map(x=>({id:x.id||uid('p'),name:x.name,type:'budget',plan:Number(x.amount),active:Boolean(x.active),effectiveFrom:TODAY}));state.costPlans=[...others,...plans];state.budgets=plans.filter(x=>x.active).map(p=>({...p,spent:state.budgets.find(b=>b.id===p.id)?.spent||0}));}
+  if(kind==='bill-plans'){const others=(state.costPlans||[]).filter(x=>x.type!=='bill');const plans=data.rows.map(x=>({id:x.id||uid('p'),name:x.biller,type:'bill',plan:Number(x.amount),dueDay:Number(x.dueDay),dueDaySecondary:x.frequency==='twice_monthly'?Number(x.dueDaySecondary):'',frequency:x.frequency,active:Boolean(x.active),effectiveFrom:TODAY}));state.costPlans=[...others,...plans];state.bills=plans.filter(x=>x.active).map(p=>({...p,actual:state.bills.find(b=>b.id===p.id)?.actual||0,paid:state.bills.find(b=>b.id===p.id)?.paid||0,status:state.bills.find(b=>b.id===p.id)?.status||'Not recorded'}));}
+  if(kind==='reverse-ledger'){const original=state.activities.find(x=>x.id===data.id);if(original&&!original.reversed){original.reversed=true;original.detail=`Reversed · ${data.note}`;state.activities.unshift({id:uid('r'),date:data.date,category:original.category,type:'reversal',title:`Reversal · ${original.title}`,detail:`Reversal recorded · ${data.note}`,amount:-original.amount,isReversal:true,reversible:false});state.funds[original.category]=(state.funds[original.category]||0)-original.amount;}}
+  if(kind==='record-current-bill'){const b=state.bills.find(x=>x.id===data.planId);if(b)Object.assign(b,{billingMonth:data.billingMonth,dueOn:data.dueOn,actual:Number(data.actual),paid:0,status:Number(data.actual)>b.plan?'Needs review':'Upcoming'});}
+  if(kind==='start-journey'){state.journey={startDate:data.date,startingDebt:currentDebt(),targetBalance:Number(data.targetBalance),targetDate:data.targetDate||'',noNewDebtSince:data.date};state.debts.forEach(d=>d.starting=d.balance);}
+  saveState(); closeModal(); render(); notice(successMessage(kind));
 }
+function successMessage(kind){return ({income:'Income recorded and allocated.','expected-income':'Expected income plan saved. No funds were added.','expected-income-update':'Expected income plan updated. No funds were added.','expected-income-cancel':'Expected income plan cancelled. No funds were changed.','budget-plans':'Monthly Spending plans saved.','bill-plans':'Bill schedules saved.','pay-bill':'The actual bill and payment details were saved.','reverse-ledger':'The entry was reversed and remains visible in the ledger.','new-goal':'Goal created. No funds were moved.','edit-goal':'Goal information updated. Existing funds and activity were preserved.','delete-goal':'Goal deleted. Reserved funds were returned to the available balance.','allocations':'Allocation percentages saved for future income.','recovery-goal':'Recovery goal updated.','start-journey':'Recovery journey started. Starting debt is now fixed.','reset-account':'Financial data reset complete. Your account and access remain active.'})[kind]||'Saved. The activity and balances were updated.';}
 
-@media (max-width:760px) {
-  .goal-sections { grid-template-columns:1fr; }
-  .goal-sections.goal-count-2,.goal-sections.goal-count-3 { grid-template-columns:1fr; }
-  .goal-section { border-right:0; }
-  .achievement-head { display:none; }
-  .achievement-row { grid-template-columns:1fr; gap:5px; }
-}
-
-@media (min-width:761px) and (max-width:1050px) {
-  .goal-sections,.goal-sections.goal-count-3 { grid-template-columns:repeat(2,minmax(0,1fr)); }
-}
+document.addEventListener('click',event=>{
+  const page=event.target.closest('[data-page]')?.dataset.page; if(page)return go(page);
+  const target=event.target.closest('[data-action]'); if(!target)return;
+  const action=target.dataset.action,id=target.dataset.id||target.dataset.category||'';
+  if(action==='close-modal')return closeModal();
+  if(action==='debt-metric')return debtMetricModal(id);
+  if(action==='debt-filter'){debtFilter=target.dataset.filter||'';if(document.querySelector('#modalRoot .modal-backdrop'))actionModal('view-debts');else render();return;}
+  if(action==='goal-filter'){goalFilter=target.dataset.filter||'progress';return allGoalsModal();}
+  if(action==='summary-shift')return summaryShift(Number(id)||0);
+  if(action==='add-budget-row'){document.querySelector('#costRows')?.insertAdjacentHTML('beforeend',budgetPlanRow());return;}
+  if(action==='add-bill-row'){document.querySelector('#costRows')?.insertAdjacentHTML('beforeend',billPlanRow());return;}
+  if(action==='delete-account'){if(!window.DRS_API?.live)return notice('Account deletion is disabled in the local visual-review build.',true);return openModal({title:'Delete account and financial data',subtitle:'This removes live financial and profile data. Required payment and operational records follow the disclosed retention rules.',form:'delete-account',submit:'Delete account',body:`<div class="warning-box">Temporary backup copies may remain until backup expiry, normally within 30 days.</div><div class="form-grid">${field('Type DELETE to confirm','confirmation','text','','required pattern="DELETE"','full')}</div>`});}
+  if(action==='reset-account'){if(!window.DRS_API?.live)return notice('Financial reset is disabled in the local visual-review build.',true);return openModal({title:'Reset financial data?',subtitle:'Your login, account access, entitlement, and payment records will remain active.',form:'reset-account',submit:'Reset financial data',body:`<div class="warning-box"><b>This cannot be undone in the app.</b><br>Income, allocations, expenses, bills, goals, debts, transfers, Recovery data, and financial activity will be removed. Export your data first if you need a copy.</div><div class="row-actions" style="justify-content:flex-start;margin-bottom:15px"><button type="button" class="button-secondary" data-action="export-data">Export data first</button></div><div class="form-grid">${field('Type RESET to confirm','confirmation','text','','required pattern="RESET" autocomplete="off"','full')}</div>`});}
+  actionModal(action,id);
+});
+document.addEventListener('submit',async event=>{
+  if(event.target.id==='modalForm'){event.preventDefault();event.stopPropagation();return submitForm(event.target);}
+  if(event.target.id==='moveForm'){
+    event.preventDefault();clearNotice();const data=Object.fromEntries(new FormData(event.target));
+    if(data.from===data.to)return notice('Choose a different destination category.',true);
+    const amount=Number(data.amount);if(!(amount>0)||amount>state.funds[data.from])return notice(`Only ${money(state.funds[data.from])} is available in ${labelFor(data.from)}.`,true);
+    try{if(window.DRS_API?.live){await window.DRS_API.persist('transfer',data,'actions');await hydrateLive();}else{state.funds[data.from]-=amount;state.funds[data.to]+=amount;state.transfers.push({id:uid('t'),date:data.date,from:data.from,to:data.to,amount});saveState();}render();notice('Money moved between categories. Total funds did not change.');}catch(error){notice(error.message,true);}return;
+  }
+},true);
+document.addEventListener('input',event=>{
+  const frequency=event.target.matches('[data-key="frequency"]')?event.target:null;if(frequency){const secondary=frequency.closest('[data-cost-row]')?.querySelector('.secondary-due');secondary?.classList.toggle('show',frequency.value==='twice_monthly');}
+  const paymentForm=event.target.closest('form[data-form="pay-bill"]');if(paymentForm){const planned=Number(paymentForm.elements.plannedAmount.value),paid=Number(paymentForm.elements.paidAmount.value||0);paymentForm.querySelector('[data-settle-check]')?.classList.toggle('show',paid>0&&paid!==planned);}
+  const form=event.target.closest('#moveForm');if(!form)return;const data=Object.fromEntries(new FormData(form)),amount=Number(data.amount||0),box=form.querySelector('.transfer-preview');if(!box)return;if(!amount){box.textContent='Enter an amount to preview the balances after this move.';return;}const before=Number(state.funds[data.from]||0),after=before-amount,destination=Number(state.funds[data.to]||0)+amount;box.innerHTML=`<b>${h(labelFor(data.from))}</b>: ${money(before)} → <b class="${after<0?'negative':''}">${money(after)}</b><br><b>${h(labelFor(data.to))}</b>: ${money(state.funds[data.to]||0)} → <b>${money(destination)}</b>${after<0?'<br><span class="negative">This would leave the source category below zero.</span>':''}`;
+});
+document.addEventListener('change',event=>{
+  if(event.target.id==='summaryPeriod'){summaryPeriod=event.target.value;return renderSummary();}
+  if(event.target.id==='summaryAnchor'){summaryAnchor=event.target.type==='number'?`${event.target.value}-01`:event.target.value;return renderSummary();}
+  if(event.target.id==='summaryFrom'){summaryFrom=event.target.value;if(summaryFrom>summaryTo)summaryTo=summaryFrom;return renderSummary();}
+  if(event.target.id==='summaryTo'){summaryTo=event.target.value;if(summaryTo<summaryFrom)summaryFrom=summaryTo;return renderSummary();}
+  const debtForm=event.target.closest('form[data-form="add-debt"]');if(debtForm&&event.target.name==='arrangement'){const recurring=event.target.value!=='one_time',twiceMonthly=event.target.value==='twice_monthly',holders=debtForm.querySelectorAll('[data-recurring-debt-fields]'),secondary=debtForm.querySelector('[data-secondary-debt-due]');holders.forEach(holder=>{holder.hidden=!recurring;holder.querySelectorAll('input,select').forEach(control=>control.disabled=!recurring);});secondary.hidden=!twiceMonthly;secondary.querySelector('input').disabled=!twiceMonthly;secondary.querySelector('input').required=twiceMonthly;}
+  const incomeForm=event.target.closest('form[data-form="income"]');if(!incomeForm)return;
+  const holder=incomeForm.querySelector('[data-income-description]'),openExpected=state.expected.filter(x=>x.status==='Expected');
+  if(event.target.name==='source'){
+    holder.innerHTML=event.target.value==='expected'?expectedIncomeSelect(openExpected):fieldControl('Description','description','text','','required');
+    if(event.target.value==='expected'){const option=holder.querySelector('option:checked');incomeForm.elements.amount.value=option?.dataset.amount||'';}
+  }
+  if(event.target.name==='expectedIncomeId')incomeForm.elements.amount.value=event.target.selectedOptions[0]?.dataset.amount||'';
+});
+$('#menuButton').addEventListener('click',()=>$('#sidebar').classList.toggle('open'));
+document.addEventListener('keydown',event=>{if(event.key==='Escape')return closeModal();if(event.key==='Tab'&&$('#modalRoot').innerHTML){const items=[...$('#modalRoot').querySelectorAll('button,input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter(x=>!x.disabled),first=items[0],last=items.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}});
+async function hydrateLive(){const patch=await window.DRS_API?.bootstrap();if(patch){Object.keys(patch).forEach(key=>{if(patch[key]!==undefined)state[key]=patch[key];});}}
+if(window.DRS_API?.live){header('Loading your workspace','Confirming your session and current balances.');app.innerHTML='<div class="loading-grid"><div class="loading-card"></div><div class="loading-card"></div><div class="loading-card wide"></div></div>';renderNav();hydrateLive().then(()=>render()).catch(error=>{if(error.message!=='Please sign in.')notice(error.message,true);});}else render();
+window.addEventListener('drs-authenticated',()=>{clearNotice();hydrateLive().then(()=>{clearNotice();render();}).catch(error=>notice(error.message,true));});
