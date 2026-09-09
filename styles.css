@@ -220,6 +220,17 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
 .section-heading h3 { margin:0; font-family:var(--serif); font-size:22px; }
 .goal-activity { max-height:330px; overflow:auto; }
 .goal-directory-all { max-width:1180px; margin:0 auto; }
+.goal-sections { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+.goal-section { min-width:0; padding:20px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); }
+.goal-section:last-child { border-right:0; }
+.goal-section .row-subtitle { min-height:36px; }
+.goal-section-amount { display:block; margin:15px 0 12px; color:var(--ink); font-family:var(--serif); font-size:25px; }
+.goal-section .row-actions { margin-top:18px; justify-content:flex-start; }
+.funds-history-grid { margin-top:20px; align-items:start; }
+.achievement-head,.achievement-row { display:grid; grid-template-columns:minmax(130px,1fr) minmax(95px,.55fr) minmax(110px,.65fr); gap:14px; align-items:center; }
+.achievement-head { padding:10px 0; color:var(--muted); font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; border-bottom:1px solid var(--line); }
+.achievement-row { padding:15px 0; border-bottom:1px solid var(--line); }
+.achievement-row:last-child { border-bottom:0; }
 .fund-pool { padding: 25px; border-radius: var(--radius); border: 1px solid #d5e3d5; background: linear-gradient(135deg,#fbfdf9,#eaf3e7); }
 .fund-pool .metric-value { margin-top: 16px; font-size: 36px; }
 
@@ -450,4 +461,11 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
   .grid-2 .list-row:not(.compact) > *,
   .grid-2 .goal-row > * { display: block; text-align: left; }
   .grid-2 .row-actions { justify-content: flex-start; }
+}
+
+@media (max-width:760px) {
+  .goal-sections { grid-template-columns:1fr; }
+  .goal-section { border-right:0; }
+  .achievement-head { display:none; }
+  .achievement-row { grid-template-columns:1fr; gap:5px; }
 }
