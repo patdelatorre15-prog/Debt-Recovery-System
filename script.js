@@ -39,9 +39,9 @@ function debtRemaining(d){return debtDueThrough(d,d.dueDate);}
 function currentMonthEnd(){return `${MONTH}-${String(new Date(Number(MONTH.slice(0,4)),Number(MONTH.slice(5,7)),0).getDate()).padStart(2,'0')}`;}
 function debtTableScheduled(d){return debtScheduledBetween(d,`${MONTH}-01`,currentMonthEnd());}
 function debtTableRemaining(d){const timing=debtTiming(d);return timing==='overdue'?debtDueThrough(d,TODAY):timing==='month'?debtDueThrough(d,currentMonthEnd()):debtRemaining(d);}
-function billRemaining(b){return b.status==='Paid'?0:Math.max(Number(b.actual)-Number(b.paid||0),0);}
+function billRemaining(b){const obligation=Number(b.actual)>0?Number(b.actual):Number(b.plan||0);return b.status==='Paid'?0:Math.max(obligation-Number(b.paid||0),0);}
 function dueOnOrBefore(date,end){return Boolean(date&&date<=end);}
-function billDisplayStatus(b){if(b.status==='Paid'||!billRemaining(b))return'Paid';if(b.dueOn&&b.dueOn<TODAY)return'Overdue';if(b.dueOn===TODAY)return'Due today';return b.status==='Needs review'?'Needs review':'Upcoming';}
+function billDisplayStatus(b){if(b.status==='Paid')return'Paid';if(b.dueOn&&b.dueOn<TODAY)return'Overdue';if(b.dueOn===TODAY)return'Due today';return b.status==='Needs review'?'Needs review':b.status==='Partially paid'?'Partially paid':'Upcoming';}
 function billUrgency(b){const status=billDisplayStatus(b);return status==='Overdue'?0:status==='Due today'?1:status==='Paid'?3:2;}
 function debtTiming(d){
   if(d.status==='Paid'||d.status==='Archived'||Number(d.balance)<=0)return 'paid';
@@ -135,7 +135,7 @@ function recoverySnapshotCard(){
 function renderLiving(){
   const planned=state.bills.reduce((s,b)=>s+b.plan,0)+state.budgets.reduce((s,b)=>s+b.plan,0);
   const spent=Math.abs(Math.min(0,activitiesFor('living').filter(a=>a.date.startsWith(MONTH)&&(['expense','bill'].includes(a.type)||(a.type==='reversal'&&['expense','bill'].includes(a.originalType)))).reduce((s,a)=>s+a.amount,0)));
-  const due=state.bills.reduce((s,b)=>s+(b.status==='Paid'?0:Math.max(b.actual-Number(b.paid||0),0)),0);
+  const due=state.bills.reduce((s,b)=>s+billRemaining(b),0);
   header('Living Expenses','Stay ahead of bills and everyday spending.',button('+ Add funds','add-funds')+button('+ Record expense','record-expense'));
   const bills=state.bills.slice().sort((a,b)=>billUrgency(a)-billUrgency(b)||(a.dueOn||'9999-12-31').localeCompare(b.dueOn||'9999-12-31')||String(a.name).localeCompare(String(b.name))).map(b=>{const status=billDisplayStatus(b);return `<div class="list-row"><span class="date">${b.dueOn?shortDate(b.dueOn):String(b.dueDay).padStart(2,'0')}</span><div><span class="row-title">${h(b.name)}</span><span class="row-subtitle">${h((b.frequency||'monthly').replace('_',' '))} · ${b.actual>b.plan?`actual is ${money(b.actual-b.plan)} above plan`:'planned '+money(b.plan)}</span></div>${pill(status,['Overdue','Needs review'].includes(status)?'bad':'')}<span class="amount">${money(billRemaining(b))}</span><div class="row-actions"><button type="button" class="button-secondary" data-action="pay-bill" data-id="${h(b.id)}">Pay</button></div></div>`;}).join('');
   const budgets=state.budgets.map(b=>`<div class="goal-row"><div><span class="row-title">${h(b.name)}</span><span class="row-subtitle">${money(b.spent)} of ${money(b.plan)}</span></div><div>${track(b.spent,b.plan,b.spent>b.plan?'coral':'')}</div><span class="amount">${money(b.plan-b.spent)}</span><button class="button-secondary" data-action="log-expense" data-id="${h(b.id)}">Log expense</button></div>`).join('');
