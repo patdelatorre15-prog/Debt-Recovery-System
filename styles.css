@@ -220,12 +220,18 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
 .section-heading h3 { margin:0; font-family:var(--serif); font-size:22px; }
 .goal-activity { max-height:330px; overflow:auto; }
 .goal-directory-all { max-width:1180px; margin:0 auto; }
-.goal-sections { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
-.goal-section { min-width:0; padding:20px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); }
-.goal-section:last-child { border-right:0; }
-.goal-section .row-subtitle { min-height:36px; }
-.goal-section-amount { display:block; margin:15px 0 12px; color:var(--ink); font-family:var(--serif); font-size:25px; }
-.goal-section .row-actions { margin-top:18px; justify-content:flex-start; }
+.goal-sections { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; overflow:hidden; border:1px solid var(--line); border-radius:14px; background:var(--line); }
+.goal-sections.goal-count-1 { grid-template-columns:1fr; }
+.goal-sections.goal-count-2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.goal-sections.goal-count-3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.goal-section { display:flex; min-width:0; min-height:190px; padding:18px 20px; flex-direction:column; background:var(--surface); }
+.goal-section-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; min-height:42px; }
+.goal-section-head .goal-link { line-height:1.25; }
+.goal-section-head > b { flex:0 0 auto; color:var(--green); font-size:12px; }
+.goal-section .row-subtitle { min-height:0; margin-bottom:12px; }
+.goal-section-amount { display:block; margin:5px 0 3px; color:var(--ink); font-family:var(--serif); font-size:27px; }
+.goal-section-actions { display:flex; align-items:center; gap:8px; margin-top:auto; padding-top:18px; }
+.goal-section-actions .button-secondary,.goal-section-actions .button-ghost { min-height:38px; padding:8px 13px; }
 .funds-history-grid { margin-top:20px; align-items:start; }
 .achievement-head,.achievement-row { display:grid; grid-template-columns:minmax(130px,1fr) minmax(95px,.55fr) minmax(110px,.65fr); gap:14px; align-items:center; }
 .achievement-head { padding:10px 0; color:var(--muted); font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; border-bottom:1px solid var(--line); }
@@ -465,7 +471,12 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
 
 @media (max-width:760px) {
   .goal-sections { grid-template-columns:1fr; }
+  .goal-sections.goal-count-2,.goal-sections.goal-count-3 { grid-template-columns:1fr; }
   .goal-section { border-right:0; }
   .achievement-head { display:none; }
   .achievement-row { grid-template-columns:1fr; gap:5px; }
+}
+
+@media (min-width:761px) and (max-width:1050px) {
+  .goal-sections,.goal-sections.goal-count-3 { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
