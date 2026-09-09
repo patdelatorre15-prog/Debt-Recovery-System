@@ -224,7 +224,8 @@ async function listGoals(request,env,user){
   if(category&&!['savings','fun'].includes(category))return reply({error:'invalid_category'},400);
   const sql=`SELECT g.*,COALESCE(-SUM(CASE WHEN l.entry_type IN ('goal_allocation','goal_use') THEN l.amount_minor ELSE 0 END),0) saved_minor FROM goals g LEFT JOIN ledger_entries l ON l.related_type='goal' AND l.related_id=g.id WHERE g.user_id=? ${category?'AND g.category=?':''} GROUP BY g.id ORDER BY g.status,g.created_at DESC`;
   const rows=category?await env.DB.prepare(sql).bind(user.id,category).all():await env.DB.prepare(sql).bind(user.id).all();
-  const achievements=await env.DB.prepare(`SELECT a.goal_id,a.achieved_amount_minor,a.achieved_on,g.category,g.name goal_name FROM goal_achievements a JOIN goals g ON g.id=a.goal_id WHERE a.user_id=? ${category?'AND g.category=?':''} ORDER BY a.achieved_on DESC,a.created_at DESC`).bind(...(category?[user.id,category]:[user.id])).all();
+  const achievementTable=await env.DB.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='goal_achievements'`).first();
+  const achievements=achievementTable?await env.DB.prepare(`SELECT a.goal_id,a.achieved_amount_minor,a.achieved_on,g.category,g.name goal_name FROM goal_achievements a JOIN goals g ON g.id=a.goal_id WHERE a.user_id=? ${category?'AND g.category=?':''} ORDER BY a.achieved_on DESC,a.created_at DESC`).bind(...(category?[user.id,category]:[user.id])).all():{results:[]};
   return reply({items:rows.results,achievements:achievements.results});
 }
 
@@ -249,7 +250,8 @@ async function allocateGoalFunds(request,env,user){
   const available=await categoryBalance(env,user,goal.category);if(available<amount)return reply({error:'insufficient_available_funds',availableMinor:available},409);
   const saved=await goalBalance(env,user,goal.id),now=new Date().toISOString(),statements=[env.DB.prepare(`INSERT INTO ledger_entries(id,user_id,occurred_on,entry_type,category,amount_minor,related_type,related_id,description,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),user.id,occurred,'goal_allocation',goal.category,-amount,'goal',goal.id,`Allocated to ${goal.name}`,now,idempotency(request))];
   const achieved=goal.target_amount_minor!==null&&saved<Number(goal.target_amount_minor)&&saved+amount>=Number(goal.target_amount_minor);
-  if(achieved)statements.push(env.DB.prepare(`INSERT OR IGNORE INTO goal_achievements(id,user_id,goal_id,achieved_amount_minor,achieved_on,created_at) VALUES(?,?,?,?,?,?)`).bind(crypto.randomUUID(),user.id,goal.id,goal.target_amount_minor,occurred,now));
+  const achievementTable=achieved?await env.DB.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='goal_achievements'`).first():null;
+  if(achievementTable)statements.push(env.DB.prepare(`INSERT OR IGNORE INTO goal_achievements(id,user_id,goal_id,achieved_amount_minor,achieved_on,created_at) VALUES(?,?,?,?,?,?)`).bind(crypto.randomUUID(),user.id,goal.id,goal.target_amount_minor,occurred,now));
   await env.DB.batch(statements);
   return reply({goalId:goal.id,amountMinor:amount,achievementRecorded:achieved},201);
 }
