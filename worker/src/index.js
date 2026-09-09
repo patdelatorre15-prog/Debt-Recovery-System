@@ -224,7 +224,8 @@ async function listGoals(request,env,user){
   if(category&&!['savings','fun'].includes(category))return reply({error:'invalid_category'},400);
   const sql=`SELECT g.*,COALESCE(-SUM(CASE WHEN l.entry_type IN ('goal_allocation','goal_use') THEN l.amount_minor ELSE 0 END),0) saved_minor FROM goals g LEFT JOIN ledger_entries l ON l.related_type='goal' AND l.related_id=g.id WHERE g.user_id=? ${category?'AND g.category=?':''} GROUP BY g.id ORDER BY g.status,g.created_at DESC`;
   const rows=category?await env.DB.prepare(sql).bind(user.id,category).all():await env.DB.prepare(sql).bind(user.id).all();
-  return reply({items:rows.results});
+  const achievements=await env.DB.prepare(`SELECT a.goal_id,a.achieved_amount_minor,a.achieved_on,g.category,g.name goal_name FROM goal_achievements a JOIN goals g ON g.id=a.goal_id WHERE a.user_id=? ${category?'AND g.category=?':''} ORDER BY a.achieved_on DESC,a.created_at DESC`).bind(...(category?[user.id,category]:[user.id])).all();
+  return reply({items:rows.results,achievements:achievements.results});
 }
 
 async function saveGoal(request,env,user){
@@ -246,10 +247,11 @@ async function allocateGoalFunds(request,env,user){
   const b=await readJson(request),amount=moneyMinor(b.amount),occurred=validDate(b.date),goal=await ownedGoal(env,user,b.goalId);
   if(!goal||amount<=0||!occurred)return reply({error:'invalid_goal_allocation'},400);
   const available=await categoryBalance(env,user,goal.category);if(available<amount)return reply({error:'insufficient_available_funds',availableMinor:available},409);
-  const now=new Date().toISOString();
-  await env.DB.prepare(`INSERT INTO ledger_entries(id,user_id,occurred_on,entry_type,category,amount_minor,related_type,related_id,description,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
-    .bind(crypto.randomUUID(),user.id,occurred,'goal_allocation',goal.category,-amount,'goal',goal.id,`Allocated to ${goal.name}`,now,idempotency(request)).run();
-  return reply({goalId:goal.id,amountMinor:amount},201);
+  const saved=await goalBalance(env,user,goal.id),now=new Date().toISOString(),statements=[env.DB.prepare(`INSERT INTO ledger_entries(id,user_id,occurred_on,entry_type,category,amount_minor,related_type,related_id,description,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),user.id,occurred,'goal_allocation',goal.category,-amount,'goal',goal.id,`Allocated to ${goal.name}`,now,idempotency(request))];
+  const achieved=goal.target_amount_minor!==null&&saved<Number(goal.target_amount_minor)&&saved+amount>=Number(goal.target_amount_minor);
+  if(achieved)statements.push(env.DB.prepare(`INSERT OR IGNORE INTO goal_achievements(id,user_id,goal_id,achieved_amount_minor,achieved_on,created_at) VALUES(?,?,?,?,?,?)`).bind(crypto.randomUUID(),user.id,goal.id,goal.target_amount_minor,occurred,now));
+  await env.DB.batch(statements);
+  return reply({goalId:goal.id,amountMinor:amount,achievementRecorded:achieved},201);
 }
 
 async function useGoalFunds(request,env,user){
@@ -346,6 +348,7 @@ async function reverseLedgerEntry(request,env,user){
 }
 
 async function listDebts(env,user){
+  await reconcileOriginalBalanceInterest(env,user.id);
   await postDueInterest(env,new Date().toISOString(),500,user.id);
   const result=await env.DB.prepare(`SELECT d.*,c.name creditor_name,(SELECT json_object('effectiveOn',v.effective_on,'paymentAmountMinor',v.payment_amount_minor,'dueDate',v.due_date,'dueDateSecondary',v.due_date_secondary,'paymentFrequency',v.payment_frequency,'interestAnchorDate',COALESCE(v.interest_anchor_date,v.due_date),'interestMode',v.interest_mode,'interestValue',v.interest_value,'interestFrequency',v.interest_frequency,'interestBasis',v.interest_basis,'paymentPaused',v.payment_paused,'createdAt',v.created_at) FROM debt_agreement_versions v WHERE v.debt_id=d.id ORDER BY v.created_at DESC,v.effective_on DESC LIMIT 1) agreement FROM debts d JOIN creditors c ON c.id=d.creditor_id WHERE d.user_id=? ORDER BY CASE d.status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 WHEN 'paid' THEN 2 WHEN 'archived' THEN 3 ELSE 4 END,c.name`).bind(user.id).all();
   return reply({items:result.results.map(x=>({...x,agreement:x.agreement?JSON.parse(x.agreement):null}))});
@@ -400,8 +403,10 @@ async function updateDebtAgreement(request,env,user){
   const b=await readJson(request),debt=await env.DB.prepare(`SELECT d.*,c.name creditor_name FROM debts d JOIN creditors c ON c.id=d.creditor_id WHERE d.id=? AND d.user_id=? AND d.status IN ('active','paused')`).bind(String(b.debtId||''),user.id).first(),reason=['agreement','negotiated','correction'].includes(b.reason)?b.reason:null,effective=validDate(b.effectiveOn),newBalance=b.currentBalance===''||b.currentBalance==null?null:moneyMinor(b.currentBalance),payment=moneyMinor(b.paymentAmount),due=validDate(b.dueDate),arrangement=paymentFrequency(b.paymentFrequency||'monthly'),dueSecondary=arrangement==='twice_monthly'?validDate(b.dueDateSecondary):null,mode=interestMode(b.interestMode),frequency=interestFrequency(b.interestFrequency);
   if(!debt||!reason||!effective||payment<0||!due||!arrangement||!mode||!frequency||(arrangement==='twice_monthly'&&(!dueSecondary||dueSecondary<=due))||(newBalance!==null&&newBalance<0))return reply({error:'invalid_agreement_update'},400);
   if(reason!=='agreement'&&newBalance===null)return reply({error:'updated_balance_required'},400);
+  const previous=await env.DB.prepare(`SELECT interest_basis FROM debt_agreement_versions WHERE debt_id=? ORDER BY created_at DESC,effective_on DESC LIMIT 1`).bind(debt.id).first();
+  const requestedBasis=clean(b.interestBasis,20),basis=['original','remaining'].includes(requestedBasis)?requestedBasis:(previous?.interest_basis||'original');
   const now=new Date().toISOString(),versionId=crypto.randomUUID(),paused=Boolean(b.paused),statements=[
-    env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,due_date_secondary,payment_frequency,interest_anchor_date,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(versionId,debt.id,effective,payment,due,dueSecondary,arrangement,due,mode,Number(b.interestValue||0),frequency,clean(b.interestBasis,20)||'remaining',paused?1:0,reason,clean(b.notes,1000),now)
+    env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,due_date_secondary,payment_frequency,interest_anchor_date,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(versionId,debt.id,effective,payment,due,dueSecondary,arrangement,due,mode,Number(b.interestValue||0),frequency,basis,paused?1:0,reason,clean(b.notes,1000),now)
   ];
   if(newBalance!==null){
     const delta=newBalance-Number(debt.current_balance_minor);
@@ -737,8 +742,33 @@ async function captureRecoverySnapshots(env,now,limit){
 }
 
 async function postDueInterest(env,now,limit,userId=''){
-  const day=dateOnly(new Date(now)),rows=await env.DB.prepare(`SELECT d.id debt_id,d.user_id,d.current_balance_minor,d.journey_start_balance_minor,(SELECT amount_minor FROM ledger_entries WHERE related_type='debt' AND related_id=d.id AND entry_type='new_debt' ORDER BY created_at LIMIT 1) original_balance_minor,v.id version_id,v.interest_mode,v.interest_value,v.interest_frequency,v.interest_basis,v.effective_on,v.due_date,COALESCE(v.interest_anchor_date,v.due_date) interest_anchor_date FROM debts d JOIN debt_agreement_versions v ON v.id=(SELECT id FROM debt_agreement_versions WHERE debt_id=d.id AND effective_on<=? ORDER BY effective_on DESC,created_at DESC LIMIT 1) WHERE d.status IN ('active','paused') AND v.interest_mode IN ('percentage','fixed') AND (?='' OR d.user_id=?) ORDER BY d.id LIMIT 200`).bind(day,userId,userId).all();let count=0;
-  for(const x of rows.results){const posted=await env.DB.prepare(`SELECT cycle_on FROM scheduled_interest_charges WHERE debt_id=? ORDER BY cycle_on`).bind(x.debt_id).all(),cycles=missingInterestCycles(x,posted.results.map(row=>row.cycle_on),day,limit-count);for(const cycle of cycles){const fresh=await env.DB.prepare(`SELECT current_balance_minor FROM debts WHERE id=?`).bind(x.debt_id).first(),base=x.interest_basis==='original'?Number(x.original_balance_minor||fresh.current_balance_minor):Number(fresh.current_balance_minor),amount=x.interest_mode==='fixed'?moneyMinor(x.interest_value):Math.round(base*Number(x.interest_value)/100);if(amount<=0)continue;const ledgerId=crypto.randomUUID();try{await env.DB.batch([env.DB.prepare(`UPDATE debts SET current_balance_minor=current_balance_minor+?,updated_at=? WHERE id=?`).bind(amount,now,x.debt_id),env.DB.prepare(`INSERT INTO ledger_entries(id,user_id,occurred_on,entry_type,category,amount_minor,related_type,related_id,description,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(ledgerId,x.user_id,cycle,'interest','debt_adjustment',amount,'debt',x.debt_id,'Interest added',now,`interest:${x.debt_id}:${cycle}`),env.DB.prepare(`INSERT INTO scheduled_interest_charges(id,user_id,debt_id,agreement_version_id,cycle_on,amount_minor,ledger_entry_id,created_at) VALUES(?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),x.user_id,x.debt_id,x.version_id,cycle,amount,ledgerId,now)]);count++;}catch(error){if(!/UNIQUE|constraint/i.test(String(error.message)))throw error;}if(count>=limit)return count;}}return count;
+  const day=dateOnly(new Date(now)),rows=await env.DB.prepare(`SELECT d.id debt_id,d.user_id,d.current_balance_minor,d.journey_start_balance_minor,(SELECT amount_minor FROM ledger_entries WHERE related_type='debt' AND related_id=d.id AND entry_type='new_debt' ORDER BY created_at LIMIT 1) original_balance_minor,(SELECT COUNT(*) FROM debt_payment_operations p WHERE p.debt_id=d.id AND p.principal_applied_minor>0) principal_payment_count,v.id version_id,v.interest_mode,v.interest_value,v.interest_frequency,v.interest_basis,v.effective_on,v.due_date,COALESCE(v.interest_anchor_date,v.due_date) interest_anchor_date FROM debts d JOIN debt_agreement_versions v ON v.id=(SELECT id FROM debt_agreement_versions WHERE debt_id=d.id AND effective_on<=? ORDER BY effective_on DESC,created_at DESC LIMIT 1) WHERE d.status IN ('active','paused') AND v.interest_mode IN ('percentage','fixed') AND (?='' OR d.user_id=?) ORDER BY d.id LIMIT 200`).bind(day,userId,userId).all();let count=0;
+  for(const x of rows.results){const posted=await env.DB.prepare(`SELECT cycle_on FROM scheduled_interest_charges WHERE debt_id=? ORDER BY cycle_on`).bind(x.debt_id).all(),cycles=missingInterestCycles(x,posted.results.map(row=>row.cycle_on),day,limit-count);for(const cycle of cycles){const fresh=await env.DB.prepare(`SELECT current_balance_minor FROM debts WHERE id=?`).bind(x.debt_id).first(),useRemaining=x.interest_basis==='remaining'&&Number(x.principal_payment_count)>0,base=useRemaining?Number(fresh.current_balance_minor):Number(x.original_balance_minor||fresh.current_balance_minor),amount=x.interest_mode==='fixed'?moneyMinor(x.interest_value):Math.round(base*Number(x.interest_value)/100);if(amount<=0)continue;const ledgerId=crypto.randomUUID();try{await env.DB.batch([env.DB.prepare(`UPDATE debts SET current_balance_minor=current_balance_minor+?,updated_at=? WHERE id=?`).bind(amount,now,x.debt_id),env.DB.prepare(`INSERT INTO ledger_entries(id,user_id,occurred_on,entry_type,category,amount_minor,related_type,related_id,description,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(ledgerId,x.user_id,cycle,'interest','debt_adjustment',amount,'debt',x.debt_id,'Interest added',now,`interest:${x.debt_id}:${cycle}`),env.DB.prepare(`INSERT INTO scheduled_interest_charges(id,user_id,debt_id,agreement_version_id,cycle_on,amount_minor,ledger_entry_id,created_at) VALUES(?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),x.user_id,x.debt_id,x.version_id,cycle,amount,ledgerId,now)]);count++;}catch(error){if(!/UNIQUE|constraint/i.test(String(error.message)))throw error;}if(count>=limit)return count;}}return count;
+}
+
+async function reconcileOriginalBalanceInterest(env,userId=''){
+  const rows=await env.DB.prepare(`SELECT s.id charge_id,s.amount_minor,s.ledger_entry_id,s.debt_id,d.user_id,
+    COALESCE((SELECT amount_minor FROM ledger_entries WHERE related_type='debt' AND related_id=d.id AND entry_type='new_debt' ORDER BY created_at LIMIT 1),d.journey_start_balance_minor) original_balance_minor,
+    v.interest_value
+    FROM scheduled_interest_charges s
+    JOIN debts d ON d.id=s.debt_id
+    JOIN debt_agreement_versions v ON v.id=s.agreement_version_id
+    WHERE v.interest_mode='percentage'
+      AND (v.interest_basis='original' OR NOT EXISTS(SELECT 1 FROM debt_payment_operations p WHERE p.debt_id=d.id AND p.principal_applied_minor>0))
+      AND (?='' OR d.user_id=?)
+    ORDER BY s.cycle_on LIMIT 1000`).bind(userId,userId).all();
+  const fixes=[],debtDeltas=new Map();
+  for(const row of rows.results){
+    const expected=Math.round(Number(row.original_balance_minor)*Number(row.interest_value)/100),delta=expected-Number(row.amount_minor);
+    if(!delta)continue;
+    fixes.push(env.DB.prepare(`UPDATE scheduled_interest_charges SET amount_minor=? WHERE id=? AND amount_minor=?`).bind(expected,row.charge_id,row.amount_minor));
+    fixes.push(env.DB.prepare(`UPDATE ledger_entries SET amount_minor=? WHERE id=? AND amount_minor=? AND entry_type='interest'`).bind(expected,row.ledger_entry_id,row.amount_minor));
+    debtDeltas.set(row.debt_id,(debtDeltas.get(row.debt_id)||0)+delta);
+  }
+  const now=new Date().toISOString();
+  for(const [debtId,delta] of debtDeltas)fixes.push(env.DB.prepare(`UPDATE debts SET current_balance_minor=current_balance_minor+?,updated_at=? WHERE id=?`).bind(delta,now,debtId));
+  if(fixes.length)await env.DB.batch(fixes);
+  return debtDeltas.size;
 }
 
 function ledger(env,x){ return env.DB.prepare(`INSERT INTO ledger_entries(id,user_id,occurred_on,entry_type,category,amount_minor,related_type,related_id,description,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(x.id,x.user.id,x.occurred,x.type,x.category,x.amount,x.relatedType||null,x.relatedId||null,x.description||'',x.now,x.key); }
