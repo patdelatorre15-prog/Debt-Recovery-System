@@ -109,6 +109,13 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
 .grid-2 { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; margin-bottom: 18px; }
 .grid-3 { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; margin-bottom: 18px; }
 .split-wide { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(330px,.65fr); gap: 18px; margin-bottom: 18px; }
+.debt-lower-grid { align-items: stretch; }
+.debt-lower-grid > .card { height: 100%; }
+.almost-done-head, .almost-done-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 16px; }
+.almost-done-head { padding: 0 0 10px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.almost-done-head span:nth-child(2) { text-align: right; }
+.almost-done-row { min-height: 58px; padding: 10px 0; border-top: 1px solid var(--line); }
+.almost-done-row .amount { white-space: nowrap; }
 .card { padding: 24px; margin-bottom: 18px; }
 .grid-2 > .card, .grid-3 > .card, .split-wide > .card { margin-bottom: 0; }
 .card-header { display: flex; align-items: start; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
