@@ -1,3 +1,5 @@
+-- Percentage debts remain original-balance based unless a principal payment
+-- explicitly selected remaining balance for future interest.
 UPDATE debt_agreement_versions
 SET interest_basis = 'original'
 WHERE interest_mode = 'percentage'
