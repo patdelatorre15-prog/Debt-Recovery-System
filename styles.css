@@ -116,12 +116,22 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
 .almost-done-head span:nth-child(2) { text-align: right; }
 .almost-done-row { min-height: 58px; padding: 10px 0; border-top: 1px solid var(--line); }
 .almost-done-row .amount { white-space: nowrap; }
-.summary-obligation-head, .summary-obligation-row { display:grid; grid-template-columns:minmax(140px,1fr) repeat(3,minmax(95px,auto)); gap:16px; align-items:center; }
-.summary-obligation-head { padding:0 0 10px; color:var(--muted); font-size:11px; font-weight:750; letter-spacing:.06em; text-transform:uppercase; }
-.summary-obligation-head span:not(:first-child), .summary-obligation-row span { text-align:right; }
-.summary-obligation-row { padding:15px 0; border-top:1px solid var(--line); }
-.summary-main-grid .card { overflow-x:auto; }
-.summary-obligation-head, .summary-obligation-row { min-width:500px; }
+.summary-controls { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
+.summary-controls select, .summary-period-input, .summary-custom-dates input { min-height:42px; padding:8px 11px; border:1px solid #cbd8cf; border-radius:11px; color:var(--ink); background:var(--paper); }
+.summary-period-input[type="number"] { width:105px; }
+.summary-arrow { width:42px; height:42px; padding:0; border:1px solid #cbd8cf; border-radius:50%; color:var(--green); background:var(--paper); font-weight:800; }
+.summary-custom-dates { display:flex; align-items:center; gap:8px; color:var(--muted); }
+.summary-period-label { margin:-7px 0 14px; color:var(--muted); font-size:13px; font-weight:700; }
+.summary-chart-layout { min-height:190px; display:flex; align-items:center; justify-content:center; gap:34px; }
+.summary-donut { width:132px; aspect-ratio:1; padding:25px; border-radius:50%; flex:0 0 auto; }
+.summary-donut span { display:block; width:100%; height:100%; border-radius:50%; background:var(--paper); }
+.summary-legend { width:min(250px,100%); display:grid; gap:11px; }
+.summary-legend > div, .summary-outflow-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:9px; }
+.summary-legend i, .summary-outflow-row i { width:9px; height:9px; display:inline-block; border-radius:50%; }
+.summary-legend span { font-size:13px; }
+.summary-outflow-row { min-height:42px; border-bottom:1px solid var(--line); }
+.summary-outflow-row span { display:flex; align-items:center; gap:9px; }
+.summary-outflow-row.total { padding-top:7px; border-bottom:0; color:var(--navy); font-weight:800; }
 .card { padding: 24px; margin-bottom: 18px; }
 .grid-2 > .card, .grid-3 > .card, .split-wide > .card { margin-bottom: 0; }
 .card-header { display: flex; align-items: start; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
@@ -405,6 +415,9 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
   .page-header { align-items: start; margin-top: 27px; }
   .page-header, .section-heading, .card-header { flex-direction: column; }
   .page-actions { justify-content: flex-start; width: 100%; }
+  .summary-controls { justify-content:flex-start; width:100%; }
+  .summary-custom-dates { width:100%; flex-wrap:wrap; }
+  .summary-chart-layout { align-items:flex-start; flex-direction:column; gap:22px; }
   .page-actions > button { flex: 1; }
   .grid-2, .grid-3, .attention-grid, .wins-grid { grid-template-columns: 1fr; }
   .income-hero { grid-template-columns:1fr; }
