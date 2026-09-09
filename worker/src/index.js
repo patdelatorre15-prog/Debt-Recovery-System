@@ -439,15 +439,17 @@ async function archiveDebt(request,env,user){
 }
 
 async function recoverySummary(env,user){
-  const [journey,balance,snapshots,cleared,changes]=await Promise.all([
+  const monthStart=`${dateOnly(new Date()).slice(0,7)}-01`,nextMonthStart=addMonths(monthStart,1);
+  const [journey,balance,snapshots,cleared,journeyChanges,monthlyChanges]=await Promise.all([
     env.DB.prepare(`SELECT * FROM recovery_journeys WHERE user_id=?`).bind(user.id).first(),
     env.DB.prepare(`SELECT COALESCE(SUM(current_balance_minor),0) total FROM debts WHERE user_id=? AND status IN ('active','paused','paid')`).bind(user.id).first(),
     env.DB.prepare(`SELECT snapshot_on,balance_minor FROM recovery_snapshots WHERE user_id=? ORDER BY snapshot_on`).bind(user.id).all(),
     env.DB.prepare(`SELECT d.id,c.name creditor_name,d.journey_start_balance_minor,d.paid_at FROM debts d JOIN creditors c ON c.id=d.creditor_id WHERE d.user_id=? AND d.status IN ('paid','archived') ORDER BY d.paid_at DESC LIMIT 20`).bind(user.id).all(),
-    env.DB.prepare(`SELECT entry_type,COALESCE(SUM(amount_minor),0) amount_minor FROM ledger_entries WHERE user_id=? AND entry_type IN ('debt_payment','negotiated_reduction','balance_correction','interest','new_debt') AND occurred_on>=COALESCE((SELECT started_on FROM recovery_journeys WHERE user_id=?),'0000-01-01') GROUP BY entry_type`).bind(user.id,user.id).all()
+    env.DB.prepare(`SELECT entry_type,COALESCE(SUM(amount_minor),0) amount_minor FROM ledger_entries WHERE user_id=? AND entry_type IN ('debt_payment','negotiated_reduction','balance_correction','interest','new_debt') AND occurred_on>=COALESCE((SELECT started_on FROM recovery_journeys WHERE user_id=?),'0000-01-01') GROUP BY entry_type`).bind(user.id,user.id).all(),
+    env.DB.prepare(`SELECT entry_type,COALESCE(SUM(amount_minor),0) amount_minor FROM ledger_entries WHERE user_id=? AND entry_type IN ('debt_payment','negotiated_reduction','balance_correction','interest','new_debt') AND occurred_on>=? AND occurred_on<? GROUP BY entry_type`).bind(user.id,monthStart,nextMonthStart).all()
   ]);
-  const current=Number(balance.total||0),starting=Number(journey?.starting_debt_minor??current),corrections=Number(changes.results.find(x=>x.entry_type==='balance_correction')?.amount_minor||0),progress=calculateRecovery(starting,current,Number(journey?.target_balance_minor||0),corrections);
-  const amount=type=>Number(changes.results.find(x=>x.entry_type===type)?.amount_minor||0),breakdown={paymentsMinor:amount('debt_payment'),negotiatedMinor:amount('negotiated_reduction'),correctionsMinor:amount('balance_correction'),interestMinor:amount('interest'),newDebtMinor:amount('new_debt')};
+  const current=Number(balance.total||0),starting=Number(journey?.starting_debt_minor??current),corrections=Number(journeyChanges.results.find(x=>x.entry_type==='balance_correction')?.amount_minor||0),progress=calculateRecovery(starting,current,Number(journey?.target_balance_minor||0),corrections);
+  const amount=type=>Number(monthlyChanges.results.find(x=>x.entry_type===type)?.amount_minor||0),breakdown={paymentsMinor:amount('debt_payment'),negotiatedMinor:amount('negotiated_reduction'),correctionsMinor:amount('balance_correction'),interestMinor:amount('interest'),newDebtMinor:amount('new_debt')};
   return reply({journey:journey||null,startingDebtMinor:starting,currentDebtMinor:current,correctionAdjustmentMinor:corrections,...progress,breakdown,snapshots:snapshots.results,debtsCleared:cleared.results,noNewDebtDays:journey?daysBetween(journey.no_new_debt_since,dateOnly(new Date())):0});
 }
 
