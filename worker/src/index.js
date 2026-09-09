@@ -32,6 +32,7 @@ export default {
       if (route === 'POST /api/allocation-rules') return cors(await saveAllocationRule(request,env,user),request,env);
       if (route === 'GET /api/goals') return cors(await listGoals(request,env,user),request,env);
       if (route === 'POST /api/goals') return cors(await saveGoal(request,env,user),request,env);
+      if (route === 'POST /api/goals/update') return cors(await updateGoal(request,env,user),request,env);
       if (route === 'POST /api/goals/allocate') return cors(await allocateGoalFunds(request,env,user),request,env);
       if (route === 'POST /api/goals/use') return cors(await useGoalFunds(request,env,user),request,env);
       if (route === 'GET /api/living-plans') return cors(await listLivingPlans(env,user),request,env);
@@ -232,6 +233,13 @@ async function saveGoal(request,env,user){
   const id=crypto.randomUUID();
   await env.DB.prepare(`INSERT INTO goals(id,user_id,category,name,goal_type,target_amount_minor,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`).bind(id,user.id,category,name,type,type==='continuous'?null:target,'active',now,now).run();
   return reply({id,category,name,goalType:type,targetAmountMinor:type==='continuous'?null:target},201);
+}
+
+async function updateGoal(request,env,user){
+  const b=await readJson(request),goal=await ownedGoal(env,user,b.goalId),type=['target','sinking','continuous'].includes(b.goalType)?b.goalType:null,name=clean(b.name,120),target=b.targetAmount===''||b.targetAmount==null?null:moneyMinor(b.targetAmount),now=new Date().toISOString();
+  if(!goal||!type||!name||(type!=='continuous'&&!(target>0)))return reply({error:'invalid_goal'},400);
+  await env.DB.prepare(`UPDATE goals SET name=?,goal_type=?,target_amount_minor=?,updated_at=? WHERE id=? AND user_id=? AND status='active'`).bind(name,type,type==='continuous'?null:target,now,goal.id,user.id).run();
+  return reply({id:goal.id,category:goal.category,name,goalType:type,targetAmountMinor:type==='continuous'?null:target},200);
 }
 
 async function allocateGoalFunds(request,env,user){
