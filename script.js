@@ -81,7 +81,7 @@ function activityRow(a,allowDelete=false){
   const canDelete=allowDelete&&a.reversible&&!a.reversed&&!a.isReversal;
   const tone=isPayment?'positive':isBad||a.amount<0?'negative':a.amount>0?'positive':'';
   const title=h(a.title||`${labelFor(a.category)} entry`),activityTitle=a.type==='cleared'&&a.relatedId?`<button type="button" class="debt-history-link row-title" data-action="debt-history" data-id="${h(a.relatedId)}">${title}</button>`:`<span class="row-title">${title}</span>`;
-  return `<div class="activity-row ${allowDelete?'deletable':''}"><span class="date">${shortDate(a.date)}</span><span class="activity-icon ${isBad?'bad':isWarning?'warn':''}" aria-hidden="true">${a.amount<0?'↓':'↑'}</span><div>${activityTitle}<span class="row-subtitle">${h(a.detail||'Recorded in your financial ledger')}</span></div><span class="amount ${tone}">${sign}${money(a.amount)}</span>${allowDelete?`<span class="activity-action">${canDelete?`<button type="button" class="button-ghost negative" data-action="delete-ledger" data-id="${h(a.id)}">Delete</button>`:''}</span>`:''}</div>`;
+  return `<div class="activity-row ${allowDelete?'deletable':''}"><span class="date">${shortDate(a.date)}</span><span class="activity-icon ${isBad?'bad':isWarning?'warn':''}" aria-hidden="true">${a.amount<0?'↓':'↑'}</span><div>${activityTitle}<span class="row-subtitle">${h(a.detail||'Recorded in your financial ledger')}</span></div>${a.hideAmount?'':`<span class="amount ${tone}">${sign}${money(a.amount)}</span>`}${allowDelete?`<span class="activity-action">${canDelete?`<button type="button" class="button-ghost negative" data-action="delete-ledger" data-id="${h(a.id)}">Delete</button>`:''}</span>`:''}</div>`;
 }
 
 function attentionItems(){
