@@ -411,7 +411,7 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
   .sidebar { transform: translateX(-101%); transition: transform .2s; box-shadow: 18px 0 55px rgba(0,0,0,.14); }
   .sidebar.open { transform: translateX(0); }
   .main-shell { margin-left: 0; padding: 0 16px 55px; }
-  .mobile-bar { height: 62px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); }
+  .mobile-bar { position:sticky; top:0; z-index:15; height:62px; margin:0 -16px; padding:0 16px; display:flex; align-items:center; gap:12px; border-bottom:1px solid var(--line); background:var(--cream); }
   .icon-button { min-height: 38px; padding: 6px 11px; color: var(--green); border-color: #ced8ce; background: var(--paper); }
   .page-header { align-items: start; margin-top: 27px; }
   .page-header, .section-heading, .card-header { flex-direction: column; }
