@@ -411,6 +411,7 @@ async function debtPayment(request,env,user){
     statements.push(env.DB.prepare(`INSERT INTO debt_agreement_versions(id,debt_id,effective_on,payment_amount_minor,due_date,due_date_secondary,payment_frequency,interest_anchor_date,interest_mode,interest_value,interest_frequency,interest_basis,payment_paused,change_reason,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),debt.id,occurred,agreement.payment_amount_minor,nextDueDate,advanced.dueDateSecondary,agreement.payment_frequency,agreement.interest_anchor_date||agreement.due_date,agreement.interest_mode,agreement.interest_value,agreement.interest_frequency,['original','remaining'].includes(b.futureInterestBasis)?b.futureInterestBasis:agreement.interest_basis,agreement.payment_paused,'agreement','Due date advanced after scheduled payment',now));
   }
   try{await env.DB.batch(statements);}catch(error){if(/UNIQUE|constraint/i.test(String(error.message)))return reply({error:'debt_changed_refresh_and_retry'},409);throw error;}
+  await recordRecoveryMilestones(env,user.id,occurred,now);
   return reply({debtId:debt.id,currentBalanceMinor:next,advanceCreditMinor:newCredit,principalAppliedMinor:principalApplied,otherFeesMinor:otherFees,totalDeductedMinor:amount+otherFees,status,nextDueDate},201);
 }
 
@@ -429,6 +430,7 @@ async function updateDebtAgreement(request,env,user){
     if(delta)statements.push(ledger(env,{id:crypto.randomUUID(),user,occurred:effective,type:reason==='negotiated'?'negotiated_reduction':'balance_correction',category:'debt_adjustment',amount:delta,relatedType:'debt',relatedId:debt.id,description:`${reason==='negotiated'?'Negotiated balance':'Balance correction'} · ${debt.creditor_name}`,key:idempotency(request),now}));
   }else statements.push(env.DB.prepare(`UPDATE debts SET status=?,updated_at=? WHERE id=? AND user_id=?`).bind(paused?'paused':'active',now,debt.id,user.id));
   await env.DB.batch(statements);
+  if(reason==='negotiated'&&newBalance!==null&&newBalance<Number(debt.current_balance_minor))await recordRecoveryMilestones(env,user.id,effective,now);
   return reply({debtId:debt.id,agreementVersionId:versionId,currentBalanceMinor:newBalance??debt.current_balance_minor,status:newBalance===0?'paid':(paused?'paused':'active')},201);
 }
 
@@ -441,19 +443,35 @@ async function archiveDebt(request,env,user){
   return reply({debtId:debt.id,status:'archived'});
 }
 
+async function recordRecoveryMilestones(env,userId,achievedOn,now){
+  const journey=await env.DB.prepare(`SELECT starting_debt_minor,target_balance_minor FROM recovery_journeys WHERE user_id=?`).bind(userId).first();
+  if(!journey)return;
+  const [balance,correction]=await Promise.all([
+    env.DB.prepare(`SELECT COALESCE(SUM(current_balance_minor),0) total FROM debts WHERE user_id=? AND status IN ('active','paused','paid')`).bind(userId).first(),
+    env.DB.prepare(`SELECT COALESCE(SUM(amount_minor),0) total FROM ledger_entries WHERE user_id=? AND entry_type='balance_correction' AND occurred_on>=COALESCE((SELECT started_on FROM recovery_journeys WHERE user_id=?),'0000-01-01')`).bind(userId,userId).first()
+  ]);
+  const progress=calculateRecovery(Number(journey.starting_debt_minor),Number(balance.total||0),Number(journey.target_balance_minor||0),Number(correction.total||0));
+  const reached=Math.min(100,Math.floor(progress.recoveredPercentage/10)*10);
+  if(reached<10)return;
+  const existing=await env.DB.prepare(`SELECT percentage FROM recovery_progress_milestones WHERE user_id=?`).bind(userId).all(),saved=new Set(existing.results.map(x=>Number(x.percentage))),statements=[];
+  for(let percentage=10;percentage<=reached;percentage+=10)if(!saved.has(percentage))statements.push(env.DB.prepare(`INSERT OR IGNORE INTO recovery_progress_milestones(id,user_id,percentage,achieved_on,created_at) VALUES(?,?,?,?,?)`).bind(crypto.randomUUID(),userId,percentage,achievedOn,now));
+  if(statements.length)await env.DB.batch(statements);
+}
+
 async function recoverySummary(env,user){
   const monthStart=`${dateOnly(new Date()).slice(0,7)}-01`,nextMonthStart=addMonths(monthStart,1);
-  const [journey,balance,snapshots,cleared,journeyChanges,monthlyChanges]=await Promise.all([
+  const [journey,balance,snapshots,cleared,milestones,journeyChanges,monthlyChanges]=await Promise.all([
     env.DB.prepare(`SELECT * FROM recovery_journeys WHERE user_id=?`).bind(user.id).first(),
     env.DB.prepare(`SELECT COALESCE(SUM(current_balance_minor),0) total FROM debts WHERE user_id=? AND status IN ('active','paused','paid')`).bind(user.id).first(),
     env.DB.prepare(`SELECT snapshot_on,balance_minor FROM recovery_snapshots WHERE user_id=? ORDER BY snapshot_on`).bind(user.id).all(),
     env.DB.prepare(`SELECT d.id,c.name creditor_name,d.journey_start_balance_minor,d.paid_at FROM debts d JOIN creditors c ON c.id=d.creditor_id WHERE d.user_id=? AND d.status IN ('paid','archived') ORDER BY d.paid_at DESC LIMIT 20`).bind(user.id).all(),
+    env.DB.prepare(`SELECT id,percentage,achieved_on FROM recovery_progress_milestones WHERE user_id=? ORDER BY achieved_on DESC,percentage DESC`).bind(user.id).all(),
     env.DB.prepare(`SELECT entry_type,COALESCE(SUM(amount_minor),0) amount_minor FROM ledger_entries WHERE user_id=? AND entry_type IN ('debt_payment','negotiated_reduction','balance_correction','interest','new_debt') AND occurred_on>=COALESCE((SELECT started_on FROM recovery_journeys WHERE user_id=?),'0000-01-01') GROUP BY entry_type`).bind(user.id,user.id).all(),
     env.DB.prepare(`SELECT entry_type,COALESCE(SUM(amount_minor),0) amount_minor FROM ledger_entries WHERE user_id=? AND entry_type IN ('debt_payment','negotiated_reduction','balance_correction','interest','new_debt') AND occurred_on>=? AND occurred_on<? GROUP BY entry_type`).bind(user.id,monthStart,nextMonthStart).all()
   ]);
   const current=Number(balance.total||0),starting=Number(journey?.starting_debt_minor??current),corrections=Number(journeyChanges.results.find(x=>x.entry_type==='balance_correction')?.amount_minor||0),progress=calculateRecovery(starting,current,Number(journey?.target_balance_minor||0),corrections);
   const amount=type=>Number(monthlyChanges.results.find(x=>x.entry_type===type)?.amount_minor||0),breakdown={paymentsMinor:amount('debt_payment'),negotiatedMinor:amount('negotiated_reduction'),correctionsMinor:amount('balance_correction'),interestMinor:amount('interest'),newDebtMinor:amount('new_debt')};
-  return reply({journey:journey||null,startingDebtMinor:starting,currentDebtMinor:current,correctionAdjustmentMinor:corrections,...progress,breakdown,snapshots:snapshots.results,debtsCleared:cleared.results,noNewDebtDays:journey?daysBetween(journey.no_new_debt_since,dateOnly(new Date())):0});
+  return reply({journey:journey||null,startingDebtMinor:starting,currentDebtMinor:current,correctionAdjustmentMinor:corrections,...progress,breakdown,snapshots:snapshots.results,debtsCleared:cleared.results,progressMilestones:milestones.results,noNewDebtDays:journey?daysBetween(journey.no_new_debt_since,dateOnly(new Date())):0});
 }
 
 async function saveRecoveryGoal(request,env,user){
@@ -478,7 +496,7 @@ async function startRecoveryJourney(request,env,user){
 }
 
 async function exportAccount(env,user){
-  const tables=['allocation_rules','ledger_entries','ledger_reversals','expected_income','living_plans','living_bill_instances','goals','creditors','debts','recovery_journeys','recovery_snapshots'];
+  const tables=['allocation_rules','ledger_entries','ledger_reversals','expected_income','living_plans','living_bill_instances','goals','creditors','debts','recovery_journeys','recovery_snapshots','recovery_progress_milestones'];
   const data={exportedAt:new Date().toISOString(),profile:{email:user.email,name:user.name,status:user.status}};
   const cleanRow=row=>{const copy={...row};delete copy.user_id;delete copy.idempotency_key;delete copy.google_sub;return copy;};
   for(const table of tables)data[table]=(await env.DB.prepare(`SELECT * FROM ${table} WHERE user_id=?`).bind(user.id).all()).results.map(cleanRow);
@@ -499,6 +517,7 @@ async function requestAccountDeletion(request,env,user){
     env.DB.prepare(`DELETE FROM expected_income WHERE user_id=?`).bind(user.id),
     env.DB.prepare(`DELETE FROM living_plans WHERE user_id=?`).bind(user.id),
     env.DB.prepare(`DELETE FROM goals WHERE user_id=?`).bind(user.id),
+    env.DB.prepare(`DELETE FROM recovery_progress_milestones WHERE user_id=?`).bind(user.id),
     env.DB.prepare(`DELETE FROM recovery_snapshots WHERE user_id=?`).bind(user.id),
     env.DB.prepare(`DELETE FROM recovery_journeys WHERE user_id=?`).bind(user.id),
     env.DB.prepare(`DELETE FROM debts WHERE user_id=?`).bind(user.id),
@@ -518,6 +537,7 @@ async function resetFinancialData(request,env,user){
     env.DB.prepare(`DELETE FROM expected_income WHERE user_id=?`).bind(user.id),
     env.DB.prepare(`DELETE FROM living_plans WHERE user_id=?`).bind(user.id),
     env.DB.prepare(`DELETE FROM goals WHERE user_id=?`).bind(user.id),
+    env.DB.prepare(`DELETE FROM recovery_progress_milestones WHERE user_id=?`).bind(user.id),
     env.DB.prepare(`DELETE FROM recovery_snapshots WHERE user_id=?`).bind(user.id),
     env.DB.prepare(`DELETE FROM recovery_journeys WHERE user_id=?`).bind(user.id),
     env.DB.prepare(`DELETE FROM debts WHERE user_id=?`).bind(user.id),
@@ -748,7 +768,7 @@ async function applyRetention(env,now,limit){
 
 async function purgeExpiredFinancialData(env,userId,now){
   await env.DB.batch([
-    env.DB.prepare(`DELETE FROM expected_income WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM living_plans WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM goals WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM recovery_snapshots WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM recovery_journeys WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM debts WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM creditors WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM ledger_reversals WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM ledger_entries WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM allocation_rules WHERE user_id=?`).bind(userId),env.DB.prepare(`INSERT INTO admin_audit(id,subject_user_id,action,result,detail_json,created_at) VALUES(?,?,?,?,?,?)`).bind(crypto.randomUUID(),userId,'expired_financial_data_deleted','success',JSON.stringify({retention:'12_months'}),now)
+    env.DB.prepare(`DELETE FROM expected_income WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM living_plans WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM goals WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM recovery_progress_milestones WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM recovery_snapshots WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM recovery_journeys WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM debts WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM creditors WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM ledger_reversals WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM ledger_entries WHERE user_id=?`).bind(userId),env.DB.prepare(`DELETE FROM allocation_rules WHERE user_id=?`).bind(userId),env.DB.prepare(`INSERT INTO admin_audit(id,subject_user_id,action,result,detail_json,created_at) VALUES(?,?,?,?,?,?)`).bind(crypto.randomUUID(),userId,'expired_financial_data_deleted','success',JSON.stringify({retention:'12_months'}),now)
   ]);
 }
 
