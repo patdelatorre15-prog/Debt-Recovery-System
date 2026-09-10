@@ -153,7 +153,7 @@ function renderFundsPage(type){
   const sections=goals.map(goalSection).join(''),goalActions=`<button class="link-button" data-action="view-all-goals">View all goals</button><button class="link-button" data-action="new-goal">New goal</button>`;
   const goalsCard=card(`${label} goals`,`<div class="goal-sections goal-count-${Math.min(goals.length,4)}">${sections||'<div class="empty">No goals created yet.</div>'}</div>`,`<div class="card-actions">${goalActions}</div>`);
   const achievements=isSavings?goalAchievementsCard():'';
-  app.innerHTML=`<div class="metrics funds-metrics">${metric(`Available ${label}`,money(pool),'Not assigned to a goal','positive')}${metric('Reserved in goals',money(reserved))}${metric('Added this month',money(activitiesFor(type).filter(a=>a.date.startsWith(MONTH)&&a.amount>0).reduce((s,a)=>s+a.amount,0)),'Allocations and direct funds','positive')}</div>${goalsCard}<div class="grid-2 funds-history-grid">${activitySection(type,`${label} activity`)}${achievements}</div>`;
+  app.innerHTML=`<div class="metrics funds-metrics">${metric(`Available ${label}`,money(pool),'Not assigned to a goal','positive')}${metric('Reserved in goals',money(reserved))}${metric('Added this month',money(activitiesFor(type).filter(a=>a.date.startsWith(MONTH)&&a.amount>0&&['allocation','funds'].includes(a.type)).reduce((s,a)=>s+a.amount,0)),'Allocations and direct funds','positive')}</div>${goalsCard}<div class="grid-2 funds-history-grid">${activitySection(type,`${label} activity`)}${achievements}</div>`;
 }
 
 function goalProgress(g){return Number(g.target)>0?Math.min(100,Math.max(0,Number(g.balance)/Number(g.target)*100)):null;}
