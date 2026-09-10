@@ -804,7 +804,7 @@ function normalizeEmail(v){ return String(v||'').trim().toLowerCase(); }
 function moneyMinor(v){ const n=Number(v); return Number.isFinite(n)?Math.round(n*100):NaN; }
 function idempotency(request){ return clean(request.headers.get('idempotency-key'),120)||crypto.randomUUID(); }
 async function readJson(request){ try{return await request.json();}catch{return{};} }
-function safeUser(u){ return {id:u.id,email:u.email,name:u.name,role:u.role}; }
+function safeUser(u){ return {id:u.id,email:u.email,name:u.name,role:u.role,createdOn:String(u.created_at||'').slice(0,10)}; }
 function randomToken(){ const b=new Uint8Array(32);crypto.getRandomValues(b);return base64url(b); }
 async function sha256(v){ return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)))].map(x=>x.toString(16).padStart(2,'0')).join(''); }
 function base64url(bytes){ let s='';bytes.forEach(b=>s+=String.fromCharCode(b));return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
