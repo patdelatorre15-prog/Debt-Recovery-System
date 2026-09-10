@@ -448,6 +448,11 @@ h1 { margin: 0; font-size: clamp(34px, 4vw, 50px); line-height: 1.03; letter-spa
   .activity-tag { display: none; }
   .list-row, .list-row.compact { grid-template-columns: 60px 1fr auto; }
   .list-row > :nth-child(3), .list-row > :nth-child(4) { display: none; }
+  .bill-row > .date { grid-column:1; grid-row:1; }
+  .bill-row > :nth-child(2) { grid-column:2; grid-row:1; }
+  .bill-row > .pill { display:inline-flex; grid-column:3; grid-row:1; justify-self:end; }
+  .bill-row > .amount { display:block; grid-column:2; grid-row:2; justify-self:start; text-align:left; }
+  .bill-row > .row-actions { grid-column:3; grid-row:2; }
   .goal-row { grid-template-columns: 1fr; }
   .goal-balance { text-align: left; }
   .goal-detail-grid { grid-template-columns:1fr; }
