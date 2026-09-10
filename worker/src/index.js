@@ -129,7 +129,7 @@ async function sessionInfo(env,user){const entitlements=await env.DB.prepare(`SE
 
 async function dashboard(env,user){
   const [balances,currentDebt,activity,allocation]=await Promise.all([
-    env.DB.prepare(`SELECT category,SUM(amount_minor) amount_minor FROM ledger_entries WHERE user_id=? GROUP BY category`).bind(user.id).all(),
+    env.DB.prepare(`SELECT category,SUM(CASE WHEN entry_type='goal_use' AND description NOT LIKE 'Released funds from deleted goal · %' THEN 0 ELSE amount_minor END) amount_minor FROM ledger_entries WHERE user_id=? GROUP BY category`).bind(user.id).all(),
     env.DB.prepare(`SELECT COALESCE(SUM(current_balance_minor),0) amount_minor FROM debts WHERE user_id=? AND status IN ('active','paused')`).bind(user.id).first(),
     env.DB.prepare(`SELECT * FROM ledger_entries WHERE user_id=? ORDER BY occurred_on DESC,created_at DESC LIMIT 8`).bind(user.id).all(),
     env.DB.prepare(`SELECT * FROM allocation_rules WHERE user_id=? AND effective_from<=? ORDER BY effective_from DESC,created_at DESC LIMIT 1`).bind(user.id,dateOnly(new Date())).first()
@@ -814,7 +814,7 @@ async function reconcileOriginalBalanceInterest(env,userId=''){
 
 function ledger(env,x){ return env.DB.prepare(`INSERT INTO ledger_entries(id,user_id,occurred_on,entry_type,category,amount_minor,related_type,related_id,description,created_at,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(x.id,x.user.id,x.occurred,x.type,x.category,x.amount,x.relatedType||null,x.relatedId||null,x.description||'',x.now,x.key); }
 async function latestAllocation(env,user,date){ return env.DB.prepare('SELECT * FROM allocation_rules WHERE user_id=? AND effective_from<=? ORDER BY effective_from DESC,created_at DESC LIMIT 1').bind(user.id,date).first(); }
-async function categoryBalance(env,user,category){ const row=await env.DB.prepare('SELECT COALESCE(SUM(amount_minor),0) balance FROM ledger_entries WHERE user_id=? AND category=?').bind(user.id,category).first(); return Number(row.balance||0); }
+async function categoryBalance(env,user,category){ const row=await env.DB.prepare(`SELECT COALESCE(SUM(CASE WHEN entry_type='goal_use' AND description NOT LIKE 'Released funds from deleted goal · %' THEN 0 ELSE amount_minor END),0) balance FROM ledger_entries WHERE user_id=? AND category=?`).bind(user.id,category).first(); return Number(row.balance||0); }
 function allocateMinor(total,rule){ const keys=['living','debt','savings','fun'],parts={},raw=keys.map(k=>total*Number(rule[`${k}_percentage`])/100),base=raw.map(Math.floor),remainder=total-base.reduce((a,b)=>a+b,0); keys.forEach((k,i)=>parts[k]=base[i]); const rank=raw.map((v,i)=>[i,v-base[i]]).sort((a,b)=>b[1]-a[1]); for(let i=0;i<remainder;i++)parts[keys[rank[i%rank.length][0]]]++; return parts; }
 function calculateRecovery(starting,current,target,correction=0){const comparableStart=Number(starting)+Number(correction),recoveredMinor=Math.max(comparableStart-Number(current),0),base=Math.max(comparableStart-Number(target),1);return {comparableStartingDebtMinor:comparableStart,recoveredMinor,recoveredPercentage:Math.min(recoveredMinor/base*100,100)};}
 function validCategory(v){ return ['living','debt','savings','fun'].includes(v)?v:null; }
