@@ -86,7 +86,9 @@ async function googleLogin(request,env){
     VALUES(?,?,?,?,?,?,?) ON CONFLICT(google_sub) DO UPDATE SET email=excluded.email,name=excluded.name,updated_at=excluded.updated_at,last_active_at=excluded.last_active_at`)
     .bind(userId,claims.sub,normalizeEmail(claims.email),String(claims.name||'').slice(0,120),now,now,now).run();
   const user=await env.DB.prepare('SELECT * FROM users WHERE google_sub=?').bind(claims.sub).first();
-  await env.DB.prepare(`INSERT OR IGNORE INTO allocation_rules(id,user_id,effective_from,living_percentage,debt_percentage,savings_percentage,fun_percentage,created_at) VALUES(?,?,?,50,20,30,0,?)`).bind(crypto.randomUUID(),user.id,dateOnly(new Date()),now).run();
+  await env.DB.prepare(`INSERT INTO allocation_rules(id,user_id,effective_from,living_percentage,debt_percentage,savings_percentage,fun_percentage,created_at)
+    SELECT ?,?,?,50,20,30,0,? WHERE NOT EXISTS (SELECT 1 FROM allocation_rules WHERE user_id=?)`)
+    .bind(crypto.randomUUID(),user.id,dateOnly(new Date()),now,user.id).run();
   await claimAdminGrants(env,user);
   if(body.licenseKey)await claimLicense(env,user,String(body.licenseKey));
   await recoverUserPurchases(env,user);
